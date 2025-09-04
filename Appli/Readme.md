@@ -26,6 +26,9 @@ The format is based on [Semantic Versioning](https://semver.org/).
 ### [Unreleased]
 - [Add new features, fixes, or changes planned for the next release]
 
+#### [0.2.0] - 03-09-2025
+- Added threadx with a startup task to blink an LED
+
 ### [0.1.0] - 03-09-2025
 - Clock changed to External 24MHz crystal oscillator
 
