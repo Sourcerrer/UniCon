@@ -20,6 +20,11 @@ The format is based on [Semantic Versioning](https://semver.org/).
 ### [Unreleased]
 - [Add new features, fixes, or changes planned for the next release]
 
+### [0.3.0] - 03-09-2025
+- Added Netx with ethernet driver for Nucleo H7RS board
+- Added TCP server at port 6000
+- Added DHCP client to get dynamic IP address from DHCP server
+
 ### [0.1.0] - 03-09-2025
 - Clock changed to External 24MHz crystal oscillator
 
