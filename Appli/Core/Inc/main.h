@@ -59,7 +59,10 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 
 /* USER CODE BEGIN Private defines */
-
+#define LED_RED_Pin GPIO_PIN_7
+#define LED_RED_GPIO_Port GPIOB
+#define LED_GREEN_Pin GPIO_PIN_10
+#define LED_GREEN_GPIO_Port GPIOD
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus
