@@ -82,7 +82,7 @@ UINT MX_NetXDuo_Init(VOID *memory_ptr);
 /* Private defines -----------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define WINDOW_SIZE                           512
-#define LINK_PRIORITY                         11
+#define LINK_PRIORITY                         20
 
 #define NULL_ADDRESS                          0
 
@@ -103,7 +103,7 @@ UINT MX_NetXDuo_Init(VOID *memory_ptr);
 #define NX_APP_THREAD_PRIORITY               10
 
 #ifndef NX_APP_INSTANCE_PRIORITY
-#define NX_APP_INSTANCE_PRIORITY             NX_APP_THREAD_PRIORITY
+#define NX_APP_INSTANCE_PRIORITY             NX_APP_THREAD_PRIORITY + 9
 #endif
 
 #define NX_APP_DEFAULT_IP_ADDRESS                   0
