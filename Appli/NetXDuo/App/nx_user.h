@@ -1440,16 +1440,12 @@
 /* Defined, MQTT Client is built with TLS support. Defining this symbol
    requires NetX Secure TLS module to be installed. NX_SECURE_ENABLE is not
    enabled by default. */
-/*
 #define NX_SECURE_ENABLE
-*/
 
 /* Defined, application must use TLS to connect to MQTT broker. This feature
    requires NX_SECURE_ENABLE defined. By default, this symbol is not
    defined. */
-/*
 #define NXD_MQTT_REQUIRE_TLS
-*/
 
 /* Defines the time out in the TCP socket disconnect call when disconnecting
    from the MQTT server in timer ticks. The default value is NX_WAIT_FOREVER. */
