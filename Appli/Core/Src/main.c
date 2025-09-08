@@ -328,8 +328,11 @@ void Error_Handler(void)
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
+  printf("Error_Handler\r\n");
   while (1)
   {
+	  HAL_GPIO_TogglePin(GPIOD, GPIO_PIN_13);
+	  HAL_Delay(100);
   }
   /* USER CODE END Error_Handler_Debug */
 }

@@ -111,11 +111,11 @@ void MX_ThreadX_Init(void)
 /* USER CODE BEGIN 1 */
 void  myThread_Startup_entry(ULONG thread_input)
 {
-
+    const static ULONG sleep_time = 250;
 	while (1)
     {
 		HAL_GPIO_TogglePin(GPIOD, GPIO_PIN_13);
-    	tx_thread_sleep(100); // Sleep for 100 ticks
+    	tx_thread_sleep(sleep_time); // Sleep for 100 ticks
 
     }
 }

@@ -89,7 +89,6 @@ NX_TCP_SOCKET TCPSocket;
 
 /* Private function prototypes -----------------------------------------------*/
 static VOID nx_app_thread_entry (ULONG thread_input);
-static VOID App_TCP_Thread_Entry(ULONG thread_input);
 static VOID ip_address_change_notify_callback(NX_IP *ip_instance, VOID *ptr);
 /* USER CODE BEGIN PFP */
 /* TCP server */
@@ -200,14 +199,16 @@ UINT MX_NetXDuo_Init(VOID *memory_ptr)
 
   /* USER CODE BEGIN TCP_Protocol_Initialization */
   /* Allocate the memory for TCP server thread   */
-  if (tx_byte_allocate(byte_pool, (VOID **) &pointer, NX_APP_THREAD_STACK_SIZE, TX_NO_WAIT) != TX_SUCCESS)
+  if (tx_byte_allocate(byte_pool, (VOID **) &pointer, TCP_THREAD_STACK_SIZE, TX_NO_WAIT) != TX_SUCCESS)
   {
     return TX_POOL_ERROR;
   }
 
   /* Create the TCP server thread */
-  ret = tx_thread_create(&AppTCPThread, "App TCP Thread", App_TCP_Thread_Entry, 0, pointer, NX_APP_THREAD_STACK_SIZE,
-                         NX_APP_THREAD_PRIORITY, NX_APP_THREAD_PRIORITY, TX_NO_TIME_SLICE, TX_DONT_START);
+  ret = tx_thread_create( &AppTCPThread, "App TCP Thread", App_TCP_Thread_Entry,
+		  	  	  	  	  0, pointer, TCP_THREAD_STACK_SIZE,
+						  TCP_THREAD_PRIORITY, TCP_THREAD_PRIORITY,
+						  TX_NO_TIME_SLICE, TX_DONT_START);
 
   if (ret != TX_SUCCESS)
   {
@@ -236,20 +237,19 @@ UINT MX_NetXDuo_Init(VOID *memory_ptr)
   }
 
    /* Allocate the memory for main thread   */
-  if (tx_byte_allocate(byte_pool, (VOID **) &pointer, 2 * NX_APP_THREAD_STACK_SIZE, TX_NO_WAIT) != TX_SUCCESS)
+  if (tx_byte_allocate(byte_pool, (VOID **) &pointer, NX_APP_THREAD_STACK_SIZE, TX_NO_WAIT) != TX_SUCCESS)
   {
     return TX_POOL_ERROR;
   }
 
   /* Create the main thread */
-  ret = tx_thread_create(&NxAppThread, "NetXDuo App thread", nx_app_thread_entry , 0, pointer, 2 * NX_APP_THREAD_STACK_SIZE,
+  ret = tx_thread_create(&NxAppThread, "NetXDuo App thread", nx_app_thread_entry , 0, pointer, NX_APP_THREAD_STACK_SIZE,
                          NX_APP_THREAD_PRIORITY, NX_APP_THREAD_PRIORITY, TX_NO_TIME_SLICE, TX_AUTO_START);
 
   if (ret != TX_SUCCESS)
   {
     return TX_THREAD_ERROR;
   }
-
 
   /* Create the DHCP client */
 
@@ -295,14 +295,16 @@ UINT MX_NetXDuo_Init(VOID *memory_ptr)
   }
 
   /* Allocate the memory for MQTT client thread */
-  if (tx_byte_allocate(byte_pool, (VOID **) &pointer, NX_APP_THREAD_STACK_SIZE, TX_NO_WAIT) != TX_SUCCESS)
+  if (tx_byte_allocate(byte_pool, (VOID **) &pointer, MQTT_THREAD_STACK_SIZE, TX_NO_WAIT) != TX_SUCCESS)
   {
     return TX_POOL_ERROR;
   }
 
   /* create the MQTT client thread */
-  ret = tx_thread_create(&AppMQTTClientThread, "App MQTT Thread", App_MQTT_Client_Thread_Entry, 0, pointer, NX_APP_THREAD_STACK_SIZE,
-                         MQTT_PRIORITY, MQTT_PRIORITY, TX_NO_TIME_SLICE, TX_DONT_START);
+  ret = tx_thread_create( &AppMQTTClientThread, "App MQTT Thread",
+		  	  	  	  	  App_MQTT_Client_Thread_Entry, 0, pointer,
+						  MQTT_THREAD_STACK_SIZE, MQTT_PRIORITY,
+						  MQTT_PRIORITY, TX_NO_TIME_SLICE, TX_DONT_START);
 
   if (ret != TX_SUCCESS)
   {
@@ -310,14 +312,16 @@ UINT MX_NetXDuo_Init(VOID *memory_ptr)
   }
 
   /* Allocate the memory for Link thread   */
-  if (tx_byte_allocate(byte_pool, (VOID **) &pointer,NX_APP_THREAD_STACK_SIZE, TX_NO_WAIT) != TX_SUCCESS)
+  if (tx_byte_allocate(byte_pool, (VOID **) &pointer,LINK_STACK, TX_NO_WAIT) != TX_SUCCESS)
   {
     return TX_POOL_ERROR;
   }
 
   /* Create the Link thread */
-  ret = tx_thread_create(&AppLinkThread, "App Link Thread", App_Link_Thread_Entry, 0, pointer, NX_APP_THREAD_STACK_SIZE,
-                         LINK_PRIORITY, LINK_PRIORITY, TX_NO_TIME_SLICE, TX_AUTO_START);
+  ret = tx_thread_create( &AppLinkThread, "App Link Thread", App_Link_Thread_Entry,
+		  	  	  	  	  0, pointer, LINK_STACK,
+                          LINK_PRIORITY, LINK_PRIORITY,
+						  TX_NO_TIME_SLICE, TX_AUTO_START);
 
   if (ret != TX_SUCCESS)
   {
@@ -525,6 +529,7 @@ static VOID App_TCP_Thread_Entry(ULONG thread_input)
     }
   }
 
+  printf("TCP server connected to a client. Start receiving data..\n");
   while(1)
   {
     ULONG socket_state;
@@ -842,7 +847,6 @@ static VOID App_SNTP_Thread_Entry(ULONG thread_input)
   tx_thread_resume(&AppMQTTClientThread);
 
 }
-
 /**
   * @brief  MQTT Client thread entry.
   * @param thread_input: ULONG user argument used by the thread entry
@@ -861,6 +865,7 @@ static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input)
 
   mqtt_server_ip.nxd_ip_version = 4;
 
+  printf("Starting MQTT client..\n");
   /* Look up MQTT Server address. */
   ret = nx_dns_host_by_name_get(&DnsClient, (UCHAR *)MQTT_BROKER_NAME,
                                 &mqtt_server_ip.nxd_ip_address.v4, DEFAULT_TIMEOUT);
@@ -871,6 +876,11 @@ static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input)
     Error_Handler();
   }
 
+  printf("MQTT broker address: %lu.%lu.%lu.%lu\n",
+		 (mqtt_server_ip.nxd_ip_address.v4 >> 24) & 0xff,
+		 (mqtt_server_ip.nxd_ip_address.v4 >> 16) & 0xff,
+		 (mqtt_server_ip.nxd_ip_address.v4 >> 8) & 0xff,
+		 (mqtt_server_ip.nxd_ip_address.v4) & 0xff);
   /* Create MQTT client instance. */
   ret = nxd_mqtt_client_create(&MqttClient, "my_client", CLIENT_ID_STRING, STRLEN(CLIENT_ID_STRING),
                                &NetXDuoEthIpInstance, &NxAppPool, (VOID*)mqtt_client_stack, MQTT_CLIENT_STACK_SIZE,
@@ -880,6 +890,8 @@ static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input)
   {
     Error_Handler();
   }
+
+  printf("MQTT client created.\n");
 
   /* Register the disconnect notification function. */
   nxd_mqtt_client_disconnect_notify_set(&MqttClient, my_disconnect_func);
@@ -996,81 +1008,5 @@ static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input)
   /* Test OK -> success Handler */
 //  Success_Handler();
 }
-
-///**
-//  * @brief  Link thread entry
-//  * @param thread_input: ULONG thread parameter
-//  * @retval none
-//  */
-//static VOID App_Link_Thread_Entry(ULONG thread_input)
-//{
-//  ULONG actual_status;
-//  UINT linkdown = 0, status;
-//
-//  while(1)
-//  {
-//    /* Send request to check if the Ethernet cable is connected. */
-//    status = nx_ip_interface_status_check(&NetXDuoEthIpInstance, 0, NX_IP_LINK_ENABLED,
-//                                          &actual_status, 10);
-//
-//    if(status == NX_SUCCESS)
-//    {
-//      if(linkdown == 1)
-//      {
-//        linkdown = 0;
-//
-//        /* The network cable is connected. */
-//        printf("The network cable is connected.\n");
-//
-//        /* Send request to enable PHY Link. */
-//        nx_ip_driver_direct_command(&NetXDuoEthIpInstance, NX_LINK_ENABLE,
-//                                    &actual_status);
-//
-//        /* Send request to check if an address is resolved. */
-//        status = nx_ip_interface_status_check(&NetXDuoEthIpInstance, 0, NX_IP_ADDRESS_RESOLVED,
-//                                              &actual_status, 10);
-//        if(status == NX_SUCCESS)
-//        {
-//          /* Stop DHCP */
-//          nx_dhcp_stop(&DHCPClient);
-//
-//          /* Reinitialize DHCP */
-//          nx_dhcp_reinitialize(&DHCPClient);
-//
-//          /* Start DHCP */
-//          nx_dhcp_start(&DHCPClient);
-//
-//          /* Wait until an IP address is ready */
-//          if(tx_semaphore_get(&DHCPSemaphore, TX_WAIT_FOREVER) != TX_SUCCESS)
-//          {
-//            /* USER CODE BEGIN DHCPSemaphore get error */
-//            Error_Handler();
-//            /* USER CODE END DHCPSemaphore get error */
-//          }
-//
-//          PRINT_IP_ADDRESS(IpAddress);
-//        }
-//        else
-//        {
-//          /* Set the DHCP Client's remaining lease time to 0 seconds to trigger an immediate renewal request for a DHCP address. */
-//          nx_dhcp_client_update_time_remaining(&DHCPClient, 0);
-//        }
-//      }
-//    }
-//    else
-//    {
-//      if(0 == linkdown)
-//      {
-//        linkdown = 1;
-//        /* The network cable is not connected. */
-//        printf("The network cable is not connected.\n");
-//        nx_ip_driver_direct_command(&NetXDuoEthIpInstance, NX_LINK_DISABLE,
-//                                    &actual_status);
-//      }
-//    }
-//
-//    tx_thread_sleep(NX_ETH_CABLE_CONNECTION_CHECK_PERIOD);
-//  }
-//}
 
 /* USER CODE END 1 */

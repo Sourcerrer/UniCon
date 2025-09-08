@@ -47,22 +47,27 @@ extern "C" {
 /* Exported constants --------------------------------------------------------*/
 /* USER CODE BEGIN EC */
 #define MOSQUITTO_CERT_FILE         "mosquitto.cert.h"
+
+/* All protocol thread priorities */
+#define MQTT_THREAD_PRIORTY         9
+#define MQTT_PRIORITY               10
+#define SNTP_PRIORITY               14
+#define TCP_THREAD_PRIORITY         15
+#define LINK_PRIORITY               12
+
   /* Threads configuration */
 /* Threads configuration */
 #define DEFAULT_MEMORY_SIZE         1024
 #define DEFAULT_MAIN_PRIORITY       10
-#define MQTT_PRIORITY               3
-#define SNTP_PRIORITY               5
-#define LINK_PRIORITY               11
 #define APP_QUEUE_SIZE              10
 /* MQTT Client configuration */
+#define MQTT_THREAD_STACK_SIZE               1024 * 3
 #define MQTT_CLIENT_STACK_SIZE      1024 * 10
 #define CLIENT_ID_STRING            "MQTT_client_ID"
-#define MQTT_THREAD_PRIORTY         2
 #define MQTT_KEEP_ALIVE_TIMER       60                    /* Define the MQTT keep alive timer for 60 seconds */
 #define CLEAN_SESSION               NX_TRUE
 #define STRLEN(p)                   (sizeof(p) - 1)
-#define TOPIC_NAME                  "Temperature"
+#define TOPIC_NAME                  "My_Temperature"
 #define NB_MESSAGE                  10                    /*  if NB_MESSAGE = 0, client will publish messages infinitely */
 #define MQTT_BROKER_NAME            "test.mosquitto.org" /* MQTT Server */
 #define MQTT_PORT                   NXD_MQTT_TLS_PORT
@@ -128,8 +133,7 @@ UINT MX_NetXDuo_Init(VOID *memory_ptr);
 /* Private defines -----------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define WINDOW_SIZE                           512
-#define LINK_PRIORITY                         20
-
+#define LINK_STACK                            1024 * 2
 #define NULL_ADDRESS                          0
 
 #define DEFAULT_PORT                          6000
@@ -142,11 +146,11 @@ UINT MX_NetXDuo_Init(VOID *memory_ptr);
 
 #define NX_APP_PACKET_POOL_SIZE              ((DEFAULT_PAYLOAD_SIZE + sizeof(NX_PACKET)) * 10)
 
-#define NX_APP_THREAD_STACK_SIZE             1024 * 2
+#define NX_APP_THREAD_STACK_SIZE             1024 * 4
 
 #define Nx_IP_INSTANCE_THREAD_SIZE           1024 * 2
 
-#define NX_APP_THREAD_PRIORITY               10
+#define NX_APP_THREAD_PRIORITY               12
 
 #ifndef NX_APP_INSTANCE_PRIORITY
 #define NX_APP_INSTANCE_PRIORITY             NX_APP_THREAD_PRIORITY
@@ -157,6 +161,8 @@ UINT MX_NetXDuo_Init(VOID *memory_ptr);
 #define NX_APP_DEFAULT_NET_MASK                     0
 
 /* USER CODE BEGIN 1 */
+#define TCP_THREAD_STACK_SIZE                1024 * 2
+
 
 /* USER CODE END 1 */
 
