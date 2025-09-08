@@ -89,8 +89,13 @@ NX_TCP_SOCKET TCPSocket;
 
 /* Private function prototypes -----------------------------------------------*/
 static VOID nx_app_thread_entry (ULONG thread_input);
+static VOID App_TCP_Thread_Entry(ULONG thread_input);
 static VOID ip_address_change_notify_callback(NX_IP *ip_instance, VOID *ptr);
 /* USER CODE BEGIN PFP */
+/* TCP server */
+static VOID App_TCP_Thread_Entry(ULONG thread_input);
+static VOID tcp_listen_callback(NX_TCP_SOCKET *socket_ptr, UINT port);
+/* MQTT client */
 static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input);
 static VOID App_SNTP_Thread_Entry(ULONG thread_input);
 static VOID App_Link_Thread_Entry(ULONG thread_input);
@@ -195,7 +200,7 @@ UINT MX_NetXDuo_Init(VOID *memory_ptr)
 
   /* USER CODE BEGIN TCP_Protocol_Initialization */
   /* Allocate the memory for TCP server thread   */
-  if (tx_byte_allocate(byte_pool, (VOID **) &pointer,2 *  DEFAULT_ARP_CACHE_SIZE, TX_NO_WAIT) != TX_SUCCESS)
+  if (tx_byte_allocate(byte_pool, (VOID **) &pointer, NX_APP_THREAD_STACK_SIZE, TX_NO_WAIT) != TX_SUCCESS)
   {
     return TX_POOL_ERROR;
   }
@@ -231,19 +236,20 @@ UINT MX_NetXDuo_Init(VOID *memory_ptr)
   }
 
    /* Allocate the memory for main thread   */
-  if (tx_byte_allocate(byte_pool, (VOID **) &pointer, NX_APP_THREAD_STACK_SIZE, TX_NO_WAIT) != TX_SUCCESS)
+  if (tx_byte_allocate(byte_pool, (VOID **) &pointer, 2 * NX_APP_THREAD_STACK_SIZE, TX_NO_WAIT) != TX_SUCCESS)
   {
     return TX_POOL_ERROR;
   }
 
   /* Create the main thread */
-  ret = tx_thread_create(&NxAppThread, "NetXDuo App thread", nx_app_thread_entry , 0, pointer, NX_APP_THREAD_STACK_SIZE,
+  ret = tx_thread_create(&NxAppThread, "NetXDuo App thread", nx_app_thread_entry , 0, pointer, 2 * NX_APP_THREAD_STACK_SIZE,
                          NX_APP_THREAD_PRIORITY, NX_APP_THREAD_PRIORITY, TX_NO_TIME_SLICE, TX_AUTO_START);
 
   if (ret != TX_SUCCESS)
   {
     return TX_THREAD_ERROR;
   }
+
 
   /* Create the DHCP client */
 
@@ -412,6 +418,17 @@ static VOID nx_app_thread_entry (ULONG thread_input)
 
 }
 /* USER CODE BEGIN 1 */
+/**
+* @brief  TCP listen call back
+* @param socket_ptr: NX_TCP_SOCKET socket registered for the callback
+* @param port: UINT  the port on which the socket is listening
+* @retval none
+*/
+static VOID tcp_listen_callback(NX_TCP_SOCKET *socket_ptr, UINT port)
+{
+  tx_semaphore_put(&TCPSemaphore);
+}
+
 /**
   * @brief  DNS Create Function.
   * @param dns_ptr
@@ -977,7 +994,7 @@ static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input)
   }
 
   /* Test OK -> success Handler */
-  Success_Handler();
+//  Success_Handler();
 }
 
 ///**
@@ -1055,7 +1072,5 @@ static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input)
 //    tx_thread_sleep(NX_ETH_CABLE_CONNECTION_CHECK_PERIOD);
 //  }
 //}
-
-/* USER CODE END 1 */
 
 /* USER CODE END 1 */
