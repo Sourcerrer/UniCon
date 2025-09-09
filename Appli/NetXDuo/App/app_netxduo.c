@@ -26,6 +26,7 @@
 /* USER CODE BEGIN Includes */
 #include "nx_ip.h"
 #include "nx_stm32_eth_config.h"
+#include "msg.h"
 #include  MOSQUITTO_CERT_FILE
 /* USER CODE END Includes */
 
