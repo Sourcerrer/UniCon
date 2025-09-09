@@ -78,7 +78,11 @@ extern "C" {
 /* SNTP Client configuration */
 #define SNTP_CLIENT_THREAD_MEMORY    6 * DEFAULT_MEMORY_SIZE
 #define SNTP_SERVER_NAME             "time1.google.com"
-#define SNTP_UPDATE_EVENT            1
+#define SNTP_SERVER_NAME_1			"0.in.pool.ntp.org"
+
+#define SNTP_UPDATE_EVENT           (uint32_t)( 1UL << 0UL )
+#define SNTP_RTC_UPDATE_EVENT		(uint32_t)( 1UL << 1UL )
+#define SNTP_NETWORK_CABLE_CONNECTED_EVENT		(uint32_t)( 1UL << 2UL )
 /* Define how often the demo checks for SNTP updates. */
 #define PERIODIC_CHECK_INTERVAL      (60 * NX_IP_PERIODIC_RATE)
 /* Define how often we check on SNTP server status. */
@@ -121,6 +125,25 @@ extern "C" {
 #define PRINT_CNX_SUCC()          do { \
                                         printf("SNTP client connected to NTP server : < %s > \n", SNTP_SERVER_NAME);\
                                      } while(0)
+#define PRINT_SNTP_SERVER(addr)  do { \
+                                       printf("Client connected to SNTP server: [%lu.%lu.%lu.%lu] \n", \
+                                       (addr >> 24) & 0xff,                      \
+                                       (addr >> 16) & 0xff,                    \
+                                       (addr >> 8) & 0xff,                   \
+                                       (addr & 0xff));                     \
+                                    } while(0)
+
+#define PRINT_CNX_SUCC_1()          do { \
+                                        printf("SNTP client connected to NTP server : < %s > \n", SNTP_SERVER_NAME_1);\
+                                     } while(0)
+
+#define PRINT_DATA(addr, port, data)   do {                                           \
+                                            printf("[%lu.%lu.%lu.%lu:%u] -> '%s' \n", \
+                                            (addr >> 24) & 0xff,                      \
+                                            (addr >> 16) & 0xff,                      \
+                                            (addr >> 8) & 0xff,                       \
+                                            (addr & 0xff), port, data);               \
+                                       } while(0)
 /* USER CODE END EM */
 
 /* Exported functions prototypes ---------------------------------------------*/

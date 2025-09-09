@@ -37,6 +37,8 @@ void MX_RTC_Init(void)
   RTC_PrivilegeStateTypeDef privilegeState = {0};
 
   /* USER CODE BEGIN RTC_Init 1 */
+  // Enable access to backup domain
+  HAL_PWR_EnableBkUpAccess();
 
   /* USER CODE END RTC_Init 1 */
 
