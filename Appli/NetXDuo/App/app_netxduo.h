@@ -67,7 +67,7 @@ extern "C" {
 #define MQTT_KEEP_ALIVE_TIMER       60                    /* Define the MQTT keep alive timer for 60 seconds */
 #define CLEAN_SESSION               NX_TRUE
 #define STRLEN(p)                   (sizeof(p) - 1)
-#define TOPIC_NAME                  "My_Temperature"
+#define TOPIC_NAME                  "Temperature"
 #define NB_MESSAGE                  10                    /*  if NB_MESSAGE = 0, client will publish messages infinitely */
 #define MQTT_BROKER_NAME            "test.mosquitto.org" /* MQTT Server */
 #define MQTT_PORT                   NXD_MQTT_TLS_PORT

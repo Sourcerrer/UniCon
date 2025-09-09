@@ -1357,7 +1357,7 @@ static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input)
       }
       else
       {
-    	  printf("MQTT get message failed\r\n");
+    	  printf("MQTT get message failed, 0x%x\r\n", ret);
         Error_Handler();
       }
     }
