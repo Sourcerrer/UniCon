@@ -50,8 +50,8 @@ ULONG mqtt_client_stack[MQTT_CLIENT_STACK_SIZE];
 TX_EVENT_FLAGS_GROUP mqtt_app_flag;
 /* Declare buffers to hold message and topic. */
 static char message[NXD_MQTT_MAX_MESSAGE_LENGTH];
-static UCHAR message_buffer[NXD_MQTT_MAX_MESSAGE_LENGTH];
-static UCHAR topic_buffer[NXD_MQTT_MAX_TOPIC_NAME_LENGTH];
+static UCHAR message_buffer[NXD_MQTT_MAX_MESSAGE_LENGTH * 2];
+static UCHAR topic_buffer[NXD_MQTT_MAX_TOPIC_NAME_LENGTH * 2];
 /* TLS buffers and certificate containers. */
 extern const NX_SECURE_TLS_CRYPTO nx_crypto_tls_ciphers;
 /* calculated with nx_secure_tls_metadata_size_calculate */
@@ -298,8 +298,9 @@ UINT MX_NetXDuo_Init(VOID *memory_ptr)
   }
 
   /* create the SNTP client thread */
-  ret = tx_thread_create(&AppSNTPThread, "App SNTP Thread", App_SNTP_Thread_Entry, 0, pointer, SNTP_CLIENT_THREAD_MEMORY,
-                         SNTP_PRIORITY, SNTP_PRIORITY, TX_NO_TIME_SLICE, TX_DONT_START);
+  ret = tx_thread_create( &AppSNTPThread, "App SNTP Thread", App_SNTP_Thread_Entry, 0,
+		  	  	  	  	  pointer, SNTP_CLIENT_THREAD_MEMORY,
+                          SNTP_PRIORITY, SNTP_PRIORITY, TX_NO_TIME_SLICE, TX_DONT_START);
 
   if (ret != TX_SUCCESS)
   {
@@ -323,7 +324,7 @@ UINT MX_NetXDuo_Init(VOID *memory_ptr)
 
   /* create the MQTT client thread */
   ret = tx_thread_create( &AppMQTTClientThread, "App MQTT Thread",
-		  	  	  	  	  App_MQTT_Client_Thread_Entry, 0, pointer,
+		  	  	  	  	  App_MQTT_Client_Thread_Entry, (ULONG)byte_pool, pointer,
 						  MQTT_THREAD_STACK_SIZE, MQTT_PRIORITY,
 						  MQTT_PRIORITY, TX_NO_TIME_SLICE, TX_DONT_START);
 
@@ -1155,90 +1156,10 @@ bool update_date_time_from_sntp( uint16_t *Day, uint16_t *Month, uint16_t *Year,
   MQTT Client thread entry
   ==============================================================================*/
 
-/** @brief  SNTP Client thread entry.
-  * @param thread_input: ULONG user argument used by the thread entry
-  * @retval none
-  */
-//static VOID App_SNTP_Thread_Entry(ULONG thread_input)
-//{
-//  UINT ret;
-//  ULONG  fraction;
-//  ULONG  events = 0;
-//  UINT   server_status;
-//  NXD_ADDRESS sntp_server_ip;
-//
-//  sntp_server_ip.nxd_ip_version = 4;
-//
-//  /* Look up SNTP Server address. */
-//  ret = nx_dns_host_by_name_get(&DnsClient, (UCHAR *)SNTP_SERVER_NAME, &sntp_server_ip.nxd_ip_address.v4, DEFAULT_TIMEOUT);
-//
-//  /* Check for error. */
-//  if (ret != NX_SUCCESS)
-//  {
-//    Error_Handler();
-//  }
-//
-//  /* Create the SNTP Client */
-//  ret =  nx_sntp_client_create(&SntpClient, &NetXDuoEthIpInstance, 0, &NxAppPool, NULL, NULL, NULL);
-//
-//  /* Check for error. */
-//  if (ret != NX_SUCCESS)
-//  {
-//    Error_Handler();
-//  }
-//
-//  /* Setup time update callback function. */
-//  nx_sntp_client_set_time_update_notify(&SntpClient, time_update_callback);
-//
-//  /* Use the IPv4 service to set up the Client and set the IPv4 SNTP server. */
-//  ret = nx_sntp_client_initialize_unicast(&SntpClient, sntp_server_ip.nxd_ip_address.v4);
-//
-//  if (ret != NX_SUCCESS)
-//  {
-//    Error_Handler();
-//  }
-//
-//  /* Run whichever service the client is configured for. */
-//  ret = nx_sntp_client_run_unicast(&SntpClient);
-//
-//  if (ret != NX_SUCCESS)
-//  {
-//    Error_Handler();
-//  }
-//
-//  /* Wait for a server update event. */
-//  tx_event_flags_get(&SntpFlags, SNTP_UPDATE_EVENT, TX_OR_CLEAR, &events, PERIODIC_CHECK_INTERVAL);
-//
-//  if (events == SNTP_UPDATE_EVENT)
-//  {
-//    /* Check for valid SNTP server status. */
-//    ret = nx_sntp_client_receiving_updates(&SntpClient, &server_status);
-//
-//    if ((ret != NX_SUCCESS) || (server_status == NX_FALSE))
-//    {
-//      /* We do not have a valid update. */
-//      Error_Handler();
-//    }
-//    /* We have a valid update.  Get the SNTP Client time. */
-//    ret = nx_sntp_client_get_local_time_extended(&SntpClient, &current_time, &fraction, NX_NULL, 0);
-//
-//    if (ret != NX_SUCCESS)
-//    {
-//      Error_Handler();
-//    }
-//    /* Take off 70 years difference */
-//    current_time -= EPOCH_TIME_DIFF;
-//
-//  }
-//  else
-//  {
-//    Error_Handler();
-//  }
-//
-//  /* start the MQTT client thread */
-//  tx_thread_resume(&AppMQTTClientThread);
-//
-//}
+#define MAX_RETRIES 5
+#define PING_TIMEOUT (1 * NX_IP_PERIODIC_RATE) // 1s
+#define PING_RETRIES 3
+
 /**
   * @brief  MQTT Client thread entry.
   * @param thread_input: ULONG user argument used by the thread entry
@@ -1257,32 +1178,64 @@ static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input)
 
   mqtt_server_ip.nxd_ip_version = 4;
 
-  printf("Starting MQTT client..\n");
-  /* Look up MQTT Server address. */
-  ret = nx_dns_host_by_name_get(&DnsClient, (UCHAR *)MQTT_BROKER_NAME,
-                                &mqtt_server_ip.nxd_ip_address.v4, DEFAULT_TIMEOUT);
+  UINT retry_count = 0;
+  NX_PACKET *ping_response;
+  UINT ping_retry;
+  TX_BYTE_POOL *byte_pool = (size_t)thread_input;
 
-  /* Check status. */
-  if (ret != NX_SUCCESS)
-  {
-	printf("DNS get host by name failed\r\n");
-    Error_Handler();
-  }
+  /******************************************************/
+  printf("Starting MQTT client..\n");
+
+  /* Create MQTT client instance */
+
+  /* Look up MQTT Server address. */
+
+  do{
+	  ret = nx_dns_host_by_name_get(&DnsClient, (UCHAR *)MQTT_BROKER_NAME,
+	                                 &mqtt_server_ip.nxd_ip_address.v4, DEFAULT_TIMEOUT);
+	  if (ret != NX_SUCCESS)
+	  {
+		  printf("DNS look up failed, error: 0x%x. Retrying...\n", ret);
+		  tx_thread_sleep(DEFAULT_TIMEOUT);
+	  }
+  }while(ret != NX_SUCCESS);
 
   printf("MQTT broker address: %lu.%lu.%lu.%lu\n",
 		 (mqtt_server_ip.nxd_ip_address.v4 >> 24) & 0xff,
 		 (mqtt_server_ip.nxd_ip_address.v4 >> 16) & 0xff,
 		 (mqtt_server_ip.nxd_ip_address.v4 >> 8) & 0xff,
 		 (mqtt_server_ip.nxd_ip_address.v4) & 0xff);
+
+  /* Ping broker with retries */
+  for (ping_retry = 0; ping_retry < PING_RETRIES; ping_retry++) {
+	  ret = nx_icmp_ping(&NetXDuoEthIpInstance, mqtt_server_ip.nxd_ip_address.v4,
+			  NULL, 0, &ping_response, PING_TIMEOUT);
+	  if (ret == NX_SUCCESS) {
+		  printf("Ping to %s: Success\n", MQTT_BROKER_NAME);
+		  nx_packet_release(ping_response);
+		  break;
+	  }
+	  printf("Ping attempt %d to %s: Failed, error: 0x%x\n", ping_retry + 1, MQTT_BROKER_NAME, ret);
+	  if (ping_retry < PING_RETRIES - 1) {
+		  tx_thread_sleep(PING_TIMEOUT / 2);
+	  }
+  }
+  if (ret != NX_SUCCESS) {
+	  printf("Ping to %s failed after %d attempts, error: 0x%x\n", MQTT_BROKER_NAME, PING_RETRIES, ret);
+	  tx_thread_suspend(&AppMQTTClientThread); // Wait before retrying the whole process
+  }
+
+
   /* Create MQTT client instance. */
-  ret = nxd_mqtt_client_create(&MqttClient, "my_client", CLIENT_ID_STRING, STRLEN(CLIENT_ID_STRING),
-                               &NetXDuoEthIpInstance, &NxAppPool, (VOID*)mqtt_client_stack, MQTT_CLIENT_STACK_SIZE,
-                               MQTT_THREAD_PRIORTY, NX_NULL, 0);
+  ret = nxd_mqtt_client_create( &MqttClient, "my_client", CLIENT_ID_STRING,
+		  	  	  	  	  	  	STRLEN(CLIENT_ID_STRING), &NetXDuoEthIpInstance,
+								&NxAppPool, (VOID*)mqtt_client_stack, MQTT_CLIENT_STACK_SIZE,
+                                MQTT_THREAD_PRIORTY, NX_NULL, 0);
 
   if (ret != NX_SUCCESS)
   {
-		printf("MQTT client creation failed\r\n");
-    Error_Handler();
+	  printf("MQTT client creation failed\r\n");
+	  tx_thread_suspend(tx_thread_identify());
   }
 
   printf("MQTT client created.\n");
@@ -1298,7 +1251,7 @@ static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input)
   if (ret != TX_SUCCESS)
   {
 	  printf("MQTT event flag creation failed\r\n");
-    Error_Handler();
+	  tx_thread_suspend(tx_thread_identify());
   }
 
   /* Start a secure connection to the server. */
@@ -1308,7 +1261,7 @@ static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input)
   if (ret != NX_SUCCESS)
   {
     printf("\nMQTT client failed to connect to broker < %s >.\n",MQTT_BROKER_NAME);
-    Error_Handler();
+    tx_thread_suspend(tx_thread_identify());
   }
   else
   {
@@ -1320,8 +1273,8 @@ static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input)
 
   if (ret != NX_SUCCESS)
   {
-	  printf("MQTT subscribe failed\r\n");
-    Error_Handler();
+	  printf("MQTT subscribe failed. Suspending thread\r\n");
+	  tx_thread_suspend(tx_thread_identify());
   }
 
   if (NB_MESSAGE ==0)
@@ -1334,13 +1287,29 @@ static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input)
     snprintf(message, STRLEN(message), "%u", aRandom32bit);
 
     /* Publish a message with QoS Level 1. */
-    ret = nxd_mqtt_client_publish(&MqttClient, TOPIC_NAME, STRLEN(TOPIC_NAME),
-                                  (CHAR*)message, STRLEN(message), NX_TRUE, QOS1, NX_WAIT_FOREVER);
-    if (ret != NX_SUCCESS)
-    {
-    	printf("MQTT publish failed\r\n");
-      Error_Handler();
-    }
+
+    ULONG retries = 0;
+    const ULONG max_retries = 5;
+    do{
+    	ret = nxd_mqtt_client_publish(&MqttClient, TOPIC_NAME, STRLEN(TOPIC_NAME),
+    	                                  (CHAR*)message, STRLEN(message), NX_TRUE, QOS1, NX_WAIT_FOREVER);
+    	if (ret != NX_SUCCESS)
+    	{
+    		printf("MQTT publish failed, 0x%x\r\n", ret);
+    		tx_thread_sleep(100);
+    		//    	      Error_Handler();
+    	}
+    }while(ret != NX_SUCCESS && retries++ < max_retries);
+
+    if(retries < max_retries)
+	{
+		printf("Message %d published: TOPIC = %s, MESSAGE = %s\n", message_count + 1, TOPIC_NAME, message);
+	}
+	else
+	{
+		printf("MQTT publish failed after %ld retries, SUpending thread....\r\n", retries);
+		tx_thread_suspend(tx_thread_identify());
+	}
 
     /* Wait for the broker to publish the message. */
     tx_event_flags_get(&mqtt_app_flag, DEMO_ALL_EVENTS, TX_OR_CLEAR, &events, TX_WAIT_FOREVER);
@@ -1349,6 +1318,10 @@ static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input)
     if(events & DEMO_MESSAGE_EVENT)
     {
       /* Get message from the broker */
+//    	do{
+//    		ret = nxd_mqtt_client_message_get(&MqttClient, topic_buffer, sizeof(topic_buffer), &topic_length,
+//    		                                        message_buffer, sizeof(message_buffer), &message_length);
+//    	}while(ret == NXD_MQTT_NO_MESSAGE);
       ret = nxd_mqtt_client_message_get(&MqttClient, topic_buffer, sizeof(topic_buffer), &topic_length,
                                         message_buffer, sizeof(message_buffer), &message_length);
       if(ret == NXD_MQTT_SUCCESS)
@@ -1358,7 +1331,7 @@ static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input)
       else
       {
     	  printf("MQTT get message failed, 0x%x\r\n", ret);
-        Error_Handler();
+//        Error_Handler();
       }
     }
 

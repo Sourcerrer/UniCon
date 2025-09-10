@@ -63,11 +63,13 @@ extern "C" {
 /* MQTT Client configuration */
 #define MQTT_THREAD_STACK_SIZE               1024 * 3
 #define MQTT_CLIENT_STACK_SIZE      1024 * 10
-#define CLIENT_ID_STRING            "MQTT_client_ID"
+#define CLIENT_ID_STRING            "IUC_MQTT_client_ID"
 #define MQTT_KEEP_ALIVE_TIMER       60                    /* Define the MQTT keep alive timer for 60 seconds */
 #define CLEAN_SESSION               NX_TRUE
 #define STRLEN(p)                   (sizeof(p) - 1)
-#define TOPIC_NAME                  "Temperature"
+//#define TOPIC_NAME                  "Temperature"
+#define TOPIC_NAME                  "IUCtoServer"
+
 #define NB_MESSAGE                  10                    /*  if NB_MESSAGE = 0, client will publish messages infinitely */
 #define MQTT_BROKER_NAME            "test.mosquitto.org" /* MQTT Server */
 #define MQTT_PORT                   NXD_MQTT_TLS_PORT
