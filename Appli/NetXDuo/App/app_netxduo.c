@@ -1070,8 +1070,20 @@ static void display_rtc_time(RTC_HandleTypeDef *hrtc)
   HAL_RTC_GetTime(&RtcHandle,&RTC_Time,RTC_FORMAT_BCD);
   HAL_RTC_GetDate(&RtcHandle,&RTC_Date,RTC_FORMAT_BCD);
 
-  printf("%02x-%02x-20%02x / %02x:%02x:%02x\n",\
+  printf("%02x-%02x-20%02x / %02x:%02x:%02x IST\n",\
         RTC_Date.Date, RTC_Date.Month, RTC_Date.Year,RTC_Time.Hours,RTC_Time.Minutes,RTC_Time.Seconds);
+}
+
+static void rtc_time_to_buffer(RTC_HandleTypeDef *hrtc, char *buffer, size_t len)
+{
+  RTC_TimeTypeDef RTC_Time = {0};
+  RTC_DateTypeDef RTC_Date = {0};
+
+  HAL_RTC_GetTime(&RtcHandle,&RTC_Time,RTC_FORMAT_BCD);
+  HAL_RTC_GetDate(&RtcHandle,&RTC_Date,RTC_FORMAT_BCD);
+
+  snprintf(buffer, len, "%02x-%02x-20%02x / %02x:%02x:%02x IST",\
+		RTC_Date.Date, RTC_Date.Month, RTC_Date.Year,RTC_Time.Hours,RTC_Time.Minutes,RTC_Time.Seconds);
 }
 
 static inline uint8_t BCD_To_Decimal(uint8_t bcd) {
@@ -1155,10 +1167,153 @@ bool update_date_time_from_sntp( uint16_t *Day, uint16_t *Month, uint16_t *Year,
 /*==============================================================================
   MQTT Client thread entry
   ==============================================================================*/
+/**************************************************
+ *  @brief Get DNS address of the MQTT broker
+ *  @todo Implement retry mechanism and error handling
+ *        Create a list of valid DNS servers to use
+ *        Check if broker is on local network or remote
+ *        If local, use mDNS to resolve address
+ *        If remote, use public DNS server
+ *  @param dns_client_ptr Pointer to the DNS client
+ *  @return NX_SUCCESS if successful, error code otherwise
+ */
+static inline bool get_mqtt_broker_ip_address(NX_DNS *ptrDnsClient ,ULONG *ip_address){
+	/* Get the mqtt addresses from the table */
 
-#define MAX_RETRIES 5
-#define PING_TIMEOUT (1 * NX_IP_PERIODIC_RATE) // 1s
-#define PING_RETRIES 3
+	/* Look up MQTT Server address. */
+	UINT ret;
+	do{
+		ret = nx_dns_host_by_name_get(ptrDnsClient, (UCHAR *)MQTT_BROKER_NAME,
+				ip_address, DEFAULT_TIMEOUT);
+		if (ret != NX_SUCCESS)
+		{
+			printf("DNS look up failed, error: 0x%x. Retrying...\n", ret);
+			tx_thread_sleep(DEFAULT_TIMEOUT);
+		}
+	}while(ret != NX_SUCCESS);
+
+	printf("MQTT broker address: %lu.%lu.%lu.%lu\n",
+			( (*ip_address) >> 24) & 0xff,
+			( (*ip_address) >> 16) & 0xff,
+			( (*ip_address) >> 8) & 0xff,
+			( (*ip_address) ) & 0xff );
+
+	return true;
+}
+
+static inline bool is_mqtt_broker_reachable(ULONG ip_address){
+	/* Ping the mqtt broker to check if it is reachable */
+	UINT ret;
+	uint16_t ping_retry = 0;
+	NX_PACKET *ping_response;
+	static const ULONG MAX_RETRIES = 5;
+	static const ULONG PING_TIMEOUT = (10 * NX_IP_PERIODIC_RATE);// 1s
+	static const uint16_t PING_RETRIES = 3;
+
+
+	/* Ping broker with retries */
+	for (ping_retry = 0; ping_retry < PING_RETRIES; ping_retry++) {
+		ret = nx_icmp_ping(&NetXDuoEthIpInstance,ip_address,
+				NULL, 0, &ping_response, PING_TIMEOUT);
+		if (ret == NX_SUCCESS) {
+			printf("Ping to %s: Success\n", MQTT_BROKER_NAME);
+			nx_packet_release(ping_response);
+			break;
+		}
+		printf("Ping attempt %d to %s: Failed, error: 0x%x\n", ping_retry + 1, MQTT_BROKER_NAME, ret);
+		if (ping_retry < PING_RETRIES - 1) {
+			tx_thread_sleep(PING_TIMEOUT / 2);
+		}
+	}
+	if (ret != NX_SUCCESS) {
+		printf("Ping to %s failed after %d attempts, error: 0x%x\n", MQTT_BROKER_NAME, PING_RETRIES, ret);
+		//		  tx_thread_suspend(&AppMQTTClientThread); // Wait before retrying the whole process
+		return false;
+	}
+
+	return true;
+}
+
+static inline bool connect_to_mqtt_broker(NXD_ADDRESS *mqtt_server_ip){
+	UINT ret;
+	  ret = nxd_mqtt_client_secure_connect(&MqttClient, mqtt_server_ip, MQTT_PORT, tls_setup_callback,
+	                                       MQTT_KEEP_ALIVE_TIMER, CLEAN_SESSION, NX_WAIT_FOREVER);
+
+	  if (ret != NX_SUCCESS){
+	    printf("\nMQTT client failed to connect to broker < %s >.\n",MQTT_BROKER_NAME);
+	    return false;
+//	    tx_thread_suspend(tx_thread_identify());
+	  }
+	  else{
+	    printf("\nMQTT client connected to broker < %s > at PORT %d :\n",MQTT_BROKER_NAME, MQTT_PORT);
+	  }
+
+	  return true;
+}
+
+static inline bool publish_time_to_topic(void){
+    /* Publish a message with QoS Level 1. */
+	UINT ret;
+	UINT message_count = 0;
+    ULONG retries = 0;
+    static const ULONG max_retries = 5;
+    const static ULONG WaitTime = 100;
+
+    /* TODO Get the buffer from User byte pool */
+    CHAR message[64] = "Hi";
+
+    rtc_time_to_buffer(&RtcHandle, message, sizeof(message));
+	/* Publish the message to the broker */
+    do{
+    	ret = nxd_mqtt_client_publish(&MqttClient, TOPIC_NAME, STRLEN(TOPIC_NAME),
+    	                                  (CHAR*)message, strlen(message), NX_TRUE, QOS1, NX_WAIT_FOREVER);
+    	if (ret != NX_SUCCESS)
+    	{
+    		printf("MQTT publish failed, 0x%x\r\n", ret);
+    		tx_thread_sleep(100);
+    		//    	      Error_Handler();
+    	}
+    }while(ret != NX_SUCCESS && retries++ < max_retries);
+
+    if(retries < max_retries){
+		printf("Message %d published: TOPIC = %s, MESSAGE = %s\n", message_count + 1, TOPIC_NAME, message);
+		return true;
+	}
+
+    printf("MQTT publish failed after %ld retries, SUpending thread....\r\n", retries);
+    return false;
+
+}
+
+
+static inline bool mqtt_client_disconnect(void){
+	UINT ret;
+	/* send an empty message at the end of the session to avoid the "Retain" message behavior */
+	ret = nxd_mqtt_client_publish(&MqttClient, TOPIC_NAME, STRLEN(TOPIC_NAME), NULL, 0, NX_TRUE, QOS1, NX_WAIT_FOREVER);
+
+	if (ret != NX_SUCCESS){
+		printf("MQTT publish failed\r\n");
+		return false;
+	}
+
+	/* Now unsubscribe the topic. */
+	ret = nxd_mqtt_client_unsubscribe(&MqttClient, TOPIC_NAME, STRLEN(TOPIC_NAME));
+
+	if (ret != NX_SUCCESS){
+		printf("MQTT unsubscribe failed\r\n");
+		return false;
+	}
+
+	/* Disconnect from the broker. */
+	ret = nxd_mqtt_client_disconnect(&MqttClient);
+
+	if (ret != NX_SUCCESS){
+		printf("MQTT disconnect failed\r\n");
+		return false;
+	}
+	printf("MQTT client disconnected\r\n");
+	return true;
+}
 
 /**
   * @brief  MQTT Client thread entry.
@@ -1169,63 +1324,23 @@ static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input)
 {
   UINT ret = NX_SUCCESS;
   NXD_ADDRESS mqtt_server_ip;
-  ULONG events;
-  UINT aRandom32bit;
-  UINT topic_length, message_length;
-  UINT remaining_msg = NB_MESSAGE;
-  UINT message_count = 0;
-  UINT unlimited_publish = NX_FALSE;
+  static const ULONG SLEEP_AFTER_DISCONNECT = (100 * NX_IP_PERIODIC_RATE); // 10 secs
+//  ULONG events;
+//  UINT aRandom32bit;
+//  UINT topic_length, message_length;
+//  UINT remaining_msg = NB_MESSAGE;
+//  UINT message_count = 0;
+//  UINT unlimited_publish = NX_FALSE;
 
   mqtt_server_ip.nxd_ip_version = 4;
 
-  UINT retry_count = 0;
-  NX_PACKET *ping_response;
-  UINT ping_retry;
+//  UINT retry_count = 0;
+//  NX_PACKET *ping_response;
+//  UINT ping_retry;
   TX_BYTE_POOL *byte_pool = (size_t)thread_input;
 
   /******************************************************/
   printf("Starting MQTT client..\n");
-
-  /* Create MQTT client instance */
-
-  /* Look up MQTT Server address. */
-
-  do{
-	  ret = nx_dns_host_by_name_get(&DnsClient, (UCHAR *)MQTT_BROKER_NAME,
-	                                 &mqtt_server_ip.nxd_ip_address.v4, DEFAULT_TIMEOUT);
-	  if (ret != NX_SUCCESS)
-	  {
-		  printf("DNS look up failed, error: 0x%x. Retrying...\n", ret);
-		  tx_thread_sleep(DEFAULT_TIMEOUT);
-	  }
-  }while(ret != NX_SUCCESS);
-
-  printf("MQTT broker address: %lu.%lu.%lu.%lu\n",
-		 (mqtt_server_ip.nxd_ip_address.v4 >> 24) & 0xff,
-		 (mqtt_server_ip.nxd_ip_address.v4 >> 16) & 0xff,
-		 (mqtt_server_ip.nxd_ip_address.v4 >> 8) & 0xff,
-		 (mqtt_server_ip.nxd_ip_address.v4) & 0xff);
-
-  /* Ping broker with retries */
-  for (ping_retry = 0; ping_retry < PING_RETRIES; ping_retry++) {
-	  ret = nx_icmp_ping(&NetXDuoEthIpInstance, mqtt_server_ip.nxd_ip_address.v4,
-			  NULL, 0, &ping_response, PING_TIMEOUT);
-	  if (ret == NX_SUCCESS) {
-		  printf("Ping to %s: Success\n", MQTT_BROKER_NAME);
-		  nx_packet_release(ping_response);
-		  break;
-	  }
-	  printf("Ping attempt %d to %s: Failed, error: 0x%x\n", ping_retry + 1, MQTT_BROKER_NAME, ret);
-	  if (ping_retry < PING_RETRIES - 1) {
-		  tx_thread_sleep(PING_TIMEOUT / 2);
-	  }
-  }
-  if (ret != NX_SUCCESS) {
-	  printf("Ping to %s failed after %d attempts, error: 0x%x\n", MQTT_BROKER_NAME, PING_RETRIES, ret);
-	  tx_thread_suspend(&AppMQTTClientThread); // Wait before retrying the whole process
-  }
-
-
   /* Create MQTT client instance. */
   ret = nxd_mqtt_client_create( &MqttClient, "my_client", CLIENT_ID_STRING,
 		  	  	  	  	  	  	STRLEN(CLIENT_ID_STRING), &NetXDuoEthIpInstance,
@@ -1253,135 +1368,157 @@ static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input)
 	  printf("MQTT event flag creation failed\r\n");
 	  tx_thread_suspend(tx_thread_identify());
   }
-
+  /****************************************************************/
+  /* Get the broker server address */
+  get_mqtt_broker_ip_address(&DnsClient, &mqtt_server_ip.nxd_ip_address.v4);
   /* Start a secure connection to the server. */
-  ret = nxd_mqtt_client_secure_connect(&MqttClient, &mqtt_server_ip, MQTT_PORT, tls_setup_callback,
-                                       MQTT_KEEP_ALIVE_TIMER, CLEAN_SESSION, NX_WAIT_FOREVER);
+  connect_to_mqtt_broker(&mqtt_server_ip);
+  while(1){
+	  /* Display RTC time each second */
+	    display_rtc_time(&RtcHandle);
+	  /* Check the connection to the broker */
+	  if( !is_mqtt_broker_reachable(mqtt_server_ip.nxd_ip_address.v4) ){
+		  /* Disconnect from the broker */
+		  mqtt_client_disconnect();
+		  tx_thread_sleep(SLEEP_AFTER_DISCONNECT);
+		  /* Get the broker server address */
+		  get_mqtt_broker_ip_address(&DnsClient, &mqtt_server_ip.nxd_ip_address.v4);
+		  /* Start a secure connection to the server. */
+		  connect_to_mqtt_broker(&mqtt_server_ip);
+	  }
+	  /* Publish the message to the broker */
+	  publish_time_to_topic();
+	  /* Subscribe to topic on the broker */
 
-  if (ret != NX_SUCCESS)
-  {
-    printf("\nMQTT client failed to connect to broker < %s >.\n",MQTT_BROKER_NAME);
-    tx_thread_suspend(tx_thread_identify());
-  }
-  else
-  {
-    printf("\nMQTT client connected to broker < %s > at PORT %d :\n",MQTT_BROKER_NAME, MQTT_PORT);
-  }
+	  /* Get the message from the broker */
 
-  /* Subscribe to the topic with QoS level 1. */
-  ret = nxd_mqtt_client_subscribe(&MqttClient, TOPIC_NAME, STRLEN(TOPIC_NAME), QOS1);
+	  /* Process the configuration */
 
-  if (ret != NX_SUCCESS)
-  {
-	  printf("MQTT subscribe failed. Suspending thread\r\n");
-	  tx_thread_suspend(tx_thread_identify());
-  }
 
-  if (NB_MESSAGE ==0)
-    unlimited_publish = NX_TRUE;
-
-  while(unlimited_publish || remaining_msg)
-  {
-    aRandom32bit = message_generate();
-
-    snprintf(message, STRLEN(message), "%u", aRandom32bit);
-
-    /* Publish a message with QoS Level 1. */
-
-    ULONG retries = 0;
-    const ULONG max_retries = 5;
-    do{
-    	ret = nxd_mqtt_client_publish(&MqttClient, TOPIC_NAME, STRLEN(TOPIC_NAME),
-    	                                  (CHAR*)message, STRLEN(message), NX_TRUE, QOS1, NX_WAIT_FOREVER);
-    	if (ret != NX_SUCCESS)
-    	{
-    		printf("MQTT publish failed, 0x%x\r\n", ret);
-    		tx_thread_sleep(100);
-    		//    	      Error_Handler();
-    	}
-    }while(ret != NX_SUCCESS && retries++ < max_retries);
-
-    if(retries < max_retries)
-	{
-		printf("Message %d published: TOPIC = %s, MESSAGE = %s\n", message_count + 1, TOPIC_NAME, message);
-	}
-	else
-	{
-		printf("MQTT publish failed after %ld retries, SUpending thread....\r\n", retries);
-		tx_thread_suspend(tx_thread_identify());
-	}
-
-    /* Wait for the broker to publish the message. */
-    tx_event_flags_get(&mqtt_app_flag, DEMO_ALL_EVENTS, TX_OR_CLEAR, &events, TX_WAIT_FOREVER);
-
-    /* Check event received */
-    if(events & DEMO_MESSAGE_EVENT)
-    {
-      /* Get message from the broker */
-//    	do{
-//    		ret = nxd_mqtt_client_message_get(&MqttClient, topic_buffer, sizeof(topic_buffer), &topic_length,
-//    		                                        message_buffer, sizeof(message_buffer), &message_length);
-//    	}while(ret == NXD_MQTT_NO_MESSAGE);
-      ret = nxd_mqtt_client_message_get(&MqttClient, topic_buffer, sizeof(topic_buffer), &topic_length,
-                                        message_buffer, sizeof(message_buffer), &message_length);
-      if(ret == NXD_MQTT_SUCCESS)
-      {
-        printf("Message %d received: TOPIC = %s, MESSAGE = %s\n", message_count + 1, topic_buffer, message_buffer);
-      }
-      else
-      {
-    	  printf("MQTT get message failed, 0x%x\r\n", ret);
-//        Error_Handler();
-      }
-    }
-
-    /* Decrement message numbre */
-    remaining_msg -- ;
-    message_count ++ ;
-
-    /* Delay 1s between each pub */
-    tx_thread_sleep(100);
+	  /* sleep for 2 seconds */
+	  /* Delay 1s between each pub */
+	  tx_thread_sleep(2000);
 
   }
-
-  /* send an empty message at the end of the session to avoid the "Retain" message behavior */
-  ret = nxd_mqtt_client_publish(&MqttClient, TOPIC_NAME, STRLEN(TOPIC_NAME), NULL, 0, NX_TRUE, QOS1, NX_WAIT_FOREVER);
-
-  if (ret != NX_SUCCESS)
-  {
-	  printf("MQTT publish failed\r\n");
-    Error_Handler();
-  }
-
-  /* Now unsubscribe the topic. */
-  ret = nxd_mqtt_client_unsubscribe(&MqttClient, TOPIC_NAME, STRLEN(TOPIC_NAME));
-
-  if (ret != NX_SUCCESS)
-  {
-	  printf("MQTT unsubscribe failed\r\n");
-    Error_Handler();
-  }
-
-  /* Disconnect from the broker. */
-  ret = nxd_mqtt_client_disconnect(&MqttClient);
-
-  if (ret != NX_SUCCESS)
-  {
-	  printf("MQTT disconnect failed\r\n");
-    Error_Handler();
-  }
-
+  /* Disconnect from the broker */
+  mqtt_client_disconnect();
   /* Delete the client instance, release all the resources. */
   ret = nxd_mqtt_client_delete(&MqttClient);
 
   if (ret != NX_SUCCESS)
   {
 	  printf("MQTT client delete failed\r\n");
-    Error_Handler();
+//    Error_Handler();
   }
+  /************************************************************/
 
-  /* Test OK -> success Handler */
-//  Success_Handler();
+//  /* Subscribe to the topic with QoS level 1. */
+//  ret = nxd_mqtt_client_subscribe(&MqttClient, TOPIC_NAME, STRLEN(TOPIC_NAME), QOS1);
+//
+//  if (ret != NX_SUCCESS)
+//  {
+//	  printf("MQTT subscribe failed. Suspending thread\r\n");
+//	  tx_thread_suspend(tx_thread_identify());
+//  }
+//
+//  if (NB_MESSAGE ==0)
+//    unlimited_publish = NX_TRUE;
+//
+//  while(unlimited_publish || remaining_msg)
+//  {
+//    aRandom32bit = message_generate();
+//
+//    snprintf(message, STRLEN(message), "%u", aRandom32bit);
+//
+//    /* Publish a message with QoS Level 1. */
+//
+//    ULONG retries = 0;
+//    const ULONG max_retries = 5;
+//    do{
+//    	ret = nxd_mqtt_client_publish(&MqttClient, TOPIC_NAME, STRLEN(TOPIC_NAME),
+//    	                                  (CHAR*)message, STRLEN(message), NX_TRUE, QOS1, NX_WAIT_FOREVER);
+//    	if (ret != NX_SUCCESS)
+//    	{
+//    		printf("MQTT publish failed, 0x%x\r\n", ret);
+//    		tx_thread_sleep(100);
+//    		//    	      Error_Handler();
+//    	}
+//    }while(ret != NX_SUCCESS && retries++ < max_retries);
+//
+//    if(retries < max_retries)
+//	{
+//		printf("Message %d published: TOPIC = %s, MESSAGE = %s\n", message_count + 1, TOPIC_NAME, message);
+//	}
+//	else
+//	{
+//		printf("MQTT publish failed after %ld retries, SUpending thread....\r\n", retries);
+//		tx_thread_suspend(tx_thread_identify());
+//	}
+//
+//    /* Wait for the broker to publish the message. */
+//    tx_event_flags_get(&mqtt_app_flag, DEMO_ALL_EVENTS, TX_OR_CLEAR, &events, TX_WAIT_FOREVER);
+//
+//    /* Check event received */
+//    if(events & DEMO_MESSAGE_EVENT)
+//    {
+//      /* Get message from the broker */
+////    	do{
+////    		ret = nxd_mqtt_client_message_get(&MqttClient, topic_buffer, sizeof(topic_buffer), &topic_length,
+////    		                                        message_buffer, sizeof(message_buffer), &message_length);
+////    	}while(ret == NXD_MQTT_NO_MESSAGE);
+//      ret = nxd_mqtt_client_message_get(&MqttClient, topic_buffer, sizeof(topic_buffer), &topic_length,
+//                                        message_buffer, sizeof(message_buffer), &message_length);
+//      if(ret == NXD_MQTT_SUCCESS)
+//      {
+//        printf("Message %d received: TOPIC = %s, MESSAGE = %s\n", message_count + 1, topic_buffer, message_buffer);
+//      }
+//      else
+//      {
+//    	  printf("MQTT get message failed, 0x%x\r\n", ret);
+////        Error_Handler();
+//      }
+//    }
+//
+//    /* Decrement message numbre */
+//    remaining_msg -- ;
+//    message_count ++ ;
+//
+//    /* Delay 1s between each pub */
+//    tx_thread_sleep(100);
+//
+//  }
+//
+//  /* send an empty message at the end of the session to avoid the "Retain" message behavior */
+//  ret = nxd_mqtt_client_publish(&MqttClient, TOPIC_NAME, STRLEN(TOPIC_NAME), NULL, 0, NX_TRUE, QOS1, NX_WAIT_FOREVER);
+//
+//  if (ret != NX_SUCCESS)
+//  {
+//	  printf("MQTT publish failed\r\n");
+//    Error_Handler();
+//  }
+//
+//  /* Now unsubscribe the topic. */
+//  ret = nxd_mqtt_client_unsubscribe(&MqttClient, TOPIC_NAME, STRLEN(TOPIC_NAME));
+//
+//  if (ret != NX_SUCCESS)
+//  {
+//	  printf("MQTT unsubscribe failed\r\n");
+//    Error_Handler();
+//  }
+//
+//  /* Disconnect from the broker. */
+//  ret = nxd_mqtt_client_disconnect(&MqttClient);
+//
+//  if (ret != NX_SUCCESS)
+//  {
+//	  printf("MQTT disconnect failed\r\n");
+//    Error_Handler();
+//  }
+//
+//
+//
+//  /* Test OK -> success Handler */
+////  Success_Handler();
 }
 
 /* USER CODE END 1 */
