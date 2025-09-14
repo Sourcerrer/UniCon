@@ -75,6 +75,20 @@ extern "C" {
 #define MQTT_PORT                   NXD_MQTT_TLS_PORT
 #define QOS0                        0
 #define QOS1                        1
+
+typedef enum {
+	emqtt_connected 			= ( (ULONG)(1UL << 0UL) ),
+	emqtt_subscribed	 		= ( (ULONG)(1UL << 1UL) ),
+	emqtt_unsubscribed 			= ( (ULONG)(1UL << 2UL) ),
+	emqtt_message_received  	= ( (ULONG)(1UL << 3UL) ),
+	emqtt_message_published 	= ( (ULONG)(1UL << 4UL) ),
+
+	emqtt_all_events 		= ( emqtt_connected |
+								emqtt_subscribed |
+								emqtt_unsubscribed |
+								emqtt_message_received |
+								emqtt_message_published ),
+} e_mqtt_event_type;
 #define DEMO_MESSAGE_EVENT          1
 #define DEMO_ALL_EVENTS             3
 /* SNTP Client configuration */

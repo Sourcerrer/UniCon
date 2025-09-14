@@ -59,7 +59,8 @@ static CHAR crypto_metadata_client[11600];
 /* Define the TLS packet reassembly buffer. */
 UCHAR tls_packet_buffer[4000];
 ULONG current_time;
-
+volatile bool is_mqtt_client_connected = false; /* this variable is set & reset in
+													the notify & disconnect callbacks */
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -481,21 +482,7 @@ UINT dns_create(NX_DNS *dns_ptr)
   return ret;
 }
 
-/* Declare the disconnect notify function. */
-static VOID my_disconnect_func(NXD_MQTT_CLIENT *client_ptr)
-{
-  NX_PARAMETER_NOT_USED(client_ptr);
-  printf("client disconnected from broker < %s >.\n", MQTT_BROKER_NAME);
-}
 
-/* Declare the notify function. */
-static VOID my_notify_func(NXD_MQTT_CLIENT* client_ptr, UINT number_of_messages)
-{
-  NX_PARAMETER_NOT_USED(client_ptr);
-  NX_PARAMETER_NOT_USED(number_of_messages);
-  tx_event_flags_set(&mqtt_app_flag, DEMO_MESSAGE_EVENT, TX_OR);
-  return;
-}
 
 /**
 * @brief  TCP server thread entry
@@ -1165,8 +1152,43 @@ bool update_date_time_from_sntp( uint16_t *Day, uint16_t *Month, uint16_t *Year,
 
 
 /*==============================================================================
-  MQTT Client thread entry
+  MQTT functions
   ==============================================================================*/
+/* Declare the disconnect notify function. */
+static VOID my_disconnect_func(NXD_MQTT_CLIENT *client_ptr)
+{
+  NX_PARAMETER_NOT_USED(client_ptr);
+  printf("client disconnected from broker < %s >.\n", MQTT_BROKER_NAME);
+  tx_event_flags_set(&mqtt_app_flag, emqtt_connected, TX_AND);  // clear the connected event flag
+  is_mqtt_client_connected = false;
+}
+
+/* Declare the notify function. */
+static VOID my_notify_func(NXD_MQTT_CLIENT* client_ptr, UINT number_of_messages)
+{
+  NX_PARAMETER_NOT_USED(client_ptr);
+  NX_PARAMETER_NOT_USED(number_of_messages);
+  tx_event_flags_set(&mqtt_app_flag, emqtt_message_received, TX_OR);  // set the message received event flag
+  return;
+}
+
+static VOID mqtt_connect_notify(NXD_MQTT_CLIENT *client_ptr, UINT status, VOID *context){
+  NX_PARAMETER_NOT_USED(client_ptr);
+  NX_PARAMETER_NOT_USED(context);
+
+  if(status == NX_SUCCESS){
+	printf("MQTT client connected to broker < %s > successfully.\n",MQTT_BROKER_NAME);
+	tx_event_flags_set(&mqtt_app_flag, emqtt_connected, TX_OR);  // set the connected event flag
+	is_mqtt_client_connected = true;
+  }
+  else{
+	printf("MQTT client failed to connect to broker < %s > with error code: 0x%x.\n",MQTT_BROKER_NAME, status);
+	tx_event_flags_set(&mqtt_app_flag, emqtt_connected, TX_AND);  // clear the connected event flag
+	is_mqtt_client_connected = false;
+  }
+  return;
+}
+
 /**************************************************
  *  @brief Get DNS address of the MQTT broker
  *  @todo Implement retry mechanism and error handling
@@ -1188,7 +1210,7 @@ static inline bool get_mqtt_broker_ip_address(NX_DNS *ptrDnsClient ,ULONG *ip_ad
 		if (ret != NX_SUCCESS)
 		{
 			printf("DNS look up failed, error: 0x%x. Retrying...\n", ret);
-			tx_thread_sleep(DEFAULT_TIMEOUT);
+			tx_thread_sleep(DEFAULT_TIMEOUT * 2);
 		}
 	}while(ret != NX_SUCCESS);
 
@@ -1206,8 +1228,7 @@ static inline bool is_mqtt_broker_reachable(ULONG ip_address){
 	UINT ret;
 	uint16_t ping_retry = 0;
 	NX_PACKET *ping_response;
-	static const ULONG MAX_RETRIES = 5;
-	static const ULONG PING_TIMEOUT = (10 * NX_IP_PERIODIC_RATE);// 1s
+	static const ULONG PING_TIMEOUT = (20 * NX_IP_PERIODIC_RATE);// 1s
 	static const uint16_t PING_RETRIES = 3;
 
 
@@ -1216,7 +1237,7 @@ static inline bool is_mqtt_broker_reachable(ULONG ip_address){
 		ret = nx_icmp_ping(&NetXDuoEthIpInstance,ip_address,
 				NULL, 0, &ping_response, PING_TIMEOUT);
 		if (ret == NX_SUCCESS) {
-			printf("Ping to %s: Success\n", MQTT_BROKER_NAME);
+//			printf("Ping to %s: Success\n", MQTT_BROKER_NAME);
 			nx_packet_release(ping_response);
 			break;
 		}
@@ -1251,6 +1272,10 @@ static inline bool connect_to_mqtt_broker(NXD_ADDRESS *mqtt_server_ip){
 	  return true;
 }
 
+static const char *Device_Id = "IUC/001"; //example device id
+static bool Power_Status = true; //example power status
+static bool Device_Online_when_DataCaptured = true; //example device online status
+static uint32_t Input_Status = 0x5A5A; //example input status
 static inline bool publish_time_to_topic(void){
     /* Publish a message with QoS Level 1. */
 	UINT ret;
@@ -1259,10 +1284,23 @@ static inline bool publish_time_to_topic(void){
     static const ULONG max_retries = 5;
     const static ULONG WaitTime = 100;
 
-    /* TODO Get the buffer from User byte pool */
-    CHAR message[64] = "Hi";
 
-    rtc_time_to_buffer(&RtcHandle, message, sizeof(message));
+    /* TODO Get the buffer from User byte pool */
+    CHAR message[64];
+    char time_string[32];
+    rtc_time_to_buffer(&RtcHandle, time_string, sizeof(time_string));
+    /* Toggle power status for demonstration */
+    Power_Status ^=1;
+    /* Toggle device online status for demonstration */
+    Device_Online_when_DataCaptured ^=1;
+
+    Input_Status ^= 0xFFFF;
+    /* Prepare the string */
+    snprintf(message, sizeof(message), "%s, %s, "
+    		"%d, %d, 0x%lx\r\n",
+    		time_string, Device_Id,
+			Power_Status, Device_Online_when_DataCaptured, Input_Status);
+    /* TODO Add sensor data to the message */
 	/* Publish the message to the broker */
     do{
     	ret = nxd_mqtt_client_publish(&MqttClient, TOPIC_NAME, STRLEN(TOPIC_NAME),
@@ -1280,7 +1318,7 @@ static inline bool publish_time_to_topic(void){
 		return true;
 	}
 
-    printf("MQTT publish failed after %ld retries, SUpending thread....\r\n", retries);
+    printf("MQTT publish failed after %ld retries,\r\n", retries);
     return false;
 
 }
@@ -1333,7 +1371,7 @@ static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input)
 //  UINT unlimited_publish = NX_FALSE;
 
   mqtt_server_ip.nxd_ip_version = 4;
-
+  ULONG actual_event_flags = 0;
 //  UINT retry_count = 0;
 //  NX_PACKET *ping_response;
 //  UINT ping_retry;
@@ -1361,6 +1399,10 @@ static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input)
   /* Set the receive notify function. */
   nxd_mqtt_client_receive_notify_set(&MqttClient, my_notify_func);
 
+  /* Set connect notification */
+  MqttClient.nxd_mqtt_connect_notify  = mqtt_connect_notify;
+  MqttClient.nxd_mqtt_connect_context = NX_NULL; // optional user context
+
   /* Create an MQTT flag */
   ret = tx_event_flags_create(&mqtt_app_flag, "my app event");
   if (ret != TX_SUCCESS)
@@ -1371,13 +1413,20 @@ static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input)
   /****************************************************************/
   /* Get the broker server address */
   get_mqtt_broker_ip_address(&DnsClient, &mqtt_server_ip.nxd_ip_address.v4);
+  /* Check if the broker is reachable */
+  is_mqtt_broker_reachable(mqtt_server_ip.nxd_ip_address.v4);
   /* Start a secure connection to the server. */
   connect_to_mqtt_broker(&mqtt_server_ip);
+  //wait for connection event flag
+  tx_event_flags_get(&mqtt_app_flag, emqtt_connected, TX_AND, &actual_event_flags, NX_WAIT_FOREVER);
   while(1){
-	  /* Display RTC time each second */
-	    display_rtc_time(&RtcHandle);
+	  /* Wait for incoming message for 2000 millisecs */
+
 	  /* Check the connection to the broker */
-	  if( !is_mqtt_broker_reachable(mqtt_server_ip.nxd_ip_address.v4) ){
+	  ret = tx_event_flags_get(&mqtt_app_flag, emqtt_connected, TX_AND, &actual_event_flags, 100);
+//	  if( !is_mqtt_broker_reachable(mqtt_server_ip.nxd_ip_address.v4) ){
+//	  if( (ret != TX_SUCCESS) || ( (actual_event_flags & emqtt_connected) == 0 ) ){
+	  if(!is_mqtt_client_connected){
 		  /* Disconnect from the broker */
 		  mqtt_client_disconnect();
 		  tx_thread_sleep(SLEEP_AFTER_DISCONNECT);
@@ -1385,12 +1434,22 @@ static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input)
 		  get_mqtt_broker_ip_address(&DnsClient, &mqtt_server_ip.nxd_ip_address.v4);
 		  /* Start a secure connection to the server. */
 		  connect_to_mqtt_broker(&mqtt_server_ip);
+		  //wait for connection event flag
+		  tx_event_flags_get(&mqtt_app_flag, emqtt_connected, TX_AND, &actual_event_flags, NX_WAIT_FOREVER);
+		  /* Subscribe to topic on the broker */
+		  ret = nxd_mqtt_client_subscribe(&MqttClient, TOPIC_NAME, STRLEN(TOPIC_NAME), QOS1);
 	  }
-	  /* Publish the message to the broker */
-	  publish_time_to_topic();
-	  /* Subscribe to topic on the broker */
 
-	  /* Get the message from the broker */
+	  /* Check the queue for message to be published */
+
+	  /* Publish the message to the broker */
+	 	  publish_time_to_topic();
+
+	  /* Check the queue whether message is received */
+
+	  /* Get the message from the broker if queue is not empty */
+
+
 
 	  /* Process the configuration */
 
