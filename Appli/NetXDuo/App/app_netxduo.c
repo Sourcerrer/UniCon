@@ -334,6 +334,18 @@ UINT MX_NetXDuo_Init(VOID *memory_ptr)
     return TX_THREAD_ERROR;
   }
 
+  {
+	  /* Create a byte pool for the messages used to */
+	  /* Create a queue to receive messages from topic */
+
+	  /* Create a queue to send messages to a topic
+	   * The message structure in queue is
+	   * 1. pointer to the topic name
+	   * 2. pointer to the message to be sent
+	   * 3. Type of message being sent
+	   * 4.  */
+  }
+
   /* Allocate the memory for Link thread   */
   if (tx_byte_allocate(byte_pool, (VOID **) &pointer,LINK_STACK, TX_NO_WAIT) != TX_SUCCESS)
   {

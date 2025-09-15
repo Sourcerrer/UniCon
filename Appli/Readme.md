@@ -10,7 +10,19 @@
 - mqtt
 
 ## Testing
-- To execute tests, [provide instructions for running tests].
+- Use the below command to get data from the topic "IUC/data" on test.mosquitto.org broker using TLSv1.2
+  > **Note:** Run this in the UniCon_Appli project folder
+  ```
+  mosquitto_sub -h test.mosquitto.org -p 8883 --cafile cert/mosquitto.org.crt -t "IUC/data" -v
+  ```
+- Use the below command to get data from the topic "IUC/data" on port 1883
+  ```
+  mosquitto_sub -h test.mosquitto.org -p 1883 -t "IUC/data" -v
+  ```
+  > **Note:** the broker somehow bridges the data between port 8883 and 1883. I can receive data on both ports.
+
+  <img src="images/Data_Rec_from_test_mosquitto.png" alt="Data Received from test.mosquitto.org" style="width:50%;">
+
 
 ## Changelog
 All notable changes to this project will be documented in this section.
