@@ -414,7 +414,7 @@ static VOID nx_app_thread_entry (ULONG thread_input)
   if (ret != NX_SUCCESS)
   {
     /* USER CODE BEGIN IP address change callback error */
-	  printf("nx_ip_address_change_notify() failed: error 0x%08x", ret);
+	  printf("nx_ip_address_get() failed: error 0x%08x", NX_NOT_SUCCESSFUL);
     Error_Handler();
     /* USER CODE END IP address change callback error */
   }
