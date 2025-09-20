@@ -1521,7 +1521,7 @@ static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input)
 	  /* Check the queue for message to be published */
 
 	  /* Publish the message to the broker */
-	 	  publish_time_to_topic();
+	  publish_time_to_topic();
 
 	  /* Check the queue whether message is received */
 

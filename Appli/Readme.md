@@ -23,6 +23,10 @@
 
   <img src="images/Data_Rec_from_test_mosquitto.png" alt="Data Received from test.mosquitto.org" style="width:50%;">
 
+## Hardware
+- Input Pins
+- Ouput Pins
+
 
 ## Changelog
 All notable changes to this project will be documented in this section.
