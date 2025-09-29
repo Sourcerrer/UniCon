@@ -786,18 +786,11 @@ UINT tls_setup_callback(NXD_MQTT_CLIENT *client_pt,
   return ret;
 }
 
-///* This callback defined handler for notifying SNTP time update event. */
-//static VOID time_update_callback(NX_SNTP_TIME_MESSAGE *time_update_ptr, NX_SNTP_TIME *local_time)
-//{
-//  NX_PARAMETER_NOT_USED(time_update_ptr);
-//  NX_PARAMETER_NOT_USED(local_time);
-//
-//  tx_event_flags_set(&SntpFlags, SNTP_UPDATE_EVENT, TX_OR);
-//}
 
 /*==============================================================================
   SNTP Client thread entry
   ==============================================================================*/
+
 /**
   * @brief  SNTP thread entry.
   * @param thread_input: ULONG user argument used by the thread entry
@@ -817,8 +810,7 @@ static void App_SNTP_Thread_Entry(ULONG info)
   const static ULONG WaitTime_long = 2000;
   sntp_server_ip.nxd_ip_version = 4;
   UINT old_threshold;
-//  tx_thread_sleep ( WaitTime_long);
-//  tx_thread_preemption_change(&AppSNTPThread, 0, &old_threshold );
+  static const ULONG RESYNC_INTERVAL = 30 * 60 * TX_TIMER_TICKS_PER_SECOND;
 
   /* Create a DNS client */
   do{
@@ -826,16 +818,6 @@ static void App_SNTP_Thread_Entry(ULONG info)
 	  tx_thread_sleep(WaitTime);
   }while(ret != NX_SUCCESS);
   printf("dns created\r\n");
-
-
-  /* Look up SNTP Server address.
-   * TODO add a lookup table to get the servers address */
-  do{
-	  ret = nx_dns_host_by_name_get(&DnsClient, (UCHAR *)SNTP_SERVER_NAME_1,
-	                                  &sntp_server_ip.nxd_ip_address.v4, NX_APP_DEFAULT_TIMEOUT);
-	  tx_thread_sleep(WaitTime);
-  }while(ret != NX_SUCCESS);
-  printf("dns host got\r\n");
 
   /* Create the SNTP Client */
   do{
@@ -848,6 +830,15 @@ static void App_SNTP_Thread_Entry(ULONG info)
 
   /* Setup time update callback function. */
    nx_sntp_client_set_time_update_notify(&SntpClient, time_update_callback);
+
+  /* Look up SNTP Server address.
+   * TODO add a lookup table to get the servers address */
+  do{
+	  ret = nx_dns_host_by_name_get(&DnsClient, (UCHAR *)SNTP_SERVER_NAME_1,
+	                                  &sntp_server_ip.nxd_ip_address.v4, NX_APP_DEFAULT_TIMEOUT);
+	  tx_thread_sleep(WaitTime);
+  }while(ret != NX_SUCCESS);
+  printf("dns host got\r\n");
 
   /* Use the IPv4 service to set up the Client and set the IPv4 SNTP server. */
    do{
@@ -888,59 +879,129 @@ static void App_SNTP_Thread_Entry(ULONG info)
 		   tx_thread_sleep(WaitTime);
 		   PRINT_CNX_SUCC_1();
 	   }
-
-//	   tx_thread_sleep(WaitTime * 2);
    }while( (  (events & SNTP_UPDATE_EVENT) != SNTP_UPDATE_EVENT  ) );
+
    printf("SNTP Event Update\r\n");
-    /* Check for valid SNTP server status. */
-	  do{
-		  ret = nx_sntp_client_receiving_updates(&SntpClient, &server_status);
-		  tx_thread_sleep(WaitTime);
-	  }while((ret != NX_SUCCESS) || (server_status == NX_FALSE));
-	  printf("SNTP client receiving updates\r\n");
-    /* We have a valid update.  Get the SNTP Client time. */
-    ret = nx_sntp_client_get_local_time_extended(&SntpClient, &seconds, &fraction, NX_NULL, 0);
-    printf("SNTP Secconds = %lu \r\n", seconds + 19800 );
-    do{
-        ret = nx_sntp_client_utility_display_date_time(&SntpClient,buffer,64);
-        tx_thread_sleep(WaitTime);
+   /* Check for valid SNTP server status. */
+   do{
+	   ret = nx_sntp_client_receiving_updates(&SntpClient, &server_status);
+	   tx_thread_sleep(WaitTime);
+   }while((ret != NX_SUCCESS) || (server_status == NX_FALSE));
+   printf("SNTP client receiving updates\r\n");
+   /* We have a valid update.  Get the SNTP Client time. */
+   ret = nx_sntp_client_get_local_time_extended(&SntpClient, &seconds, &fraction, NX_NULL, 0);
+   printf("SNTP Secconds = %lu \r\n", seconds + 19800 );
+   do{
+	   ret = nx_sntp_client_utility_display_date_time(&SntpClient,buffer,64);
+	   tx_thread_sleep(WaitTime);
 
-    }while(ret != NX_SUCCESS);
+   }while(ret != NX_SUCCESS);
 
-    printf("\nSNTP update :\n");
-    printf("%s\n\n",buffer);
+   printf("\nSNTP update :\n");
+   printf("%s\n\n",buffer);
 
-  /* Set Current time from SNTP TO RTC */
-  rtc_time_update(&SntpClient);
-  /* We can stop the SNTP service if for example we think the SNTP server has stopped sending updates */
-  do{
-	  ret = nx_sntp_client_stop(&SntpClient);
-	  tx_thread_sleep(WaitTime);
-  }while(ret != NX_SUCCESS);
-  printf("SNTP client stopped\r\n");
-
-
-  /* When done with the SNTP Client, we delete it */
-  do{
-	  ret = nx_sntp_client_delete(&SntpClient);
-	  tx_thread_sleep(WaitTime);
-  }while( (ret != NX_SUCCESS) );
-  printf("SNTP client deleted\r\n");
-  /* Display RTC time each second */
-  display_rtc_time(&RtcHandle);
+   /* Set Current time from SNTP TO RTC */
+   rtc_time_update(&SntpClient);
+   /* We can stop the SNTP service if for example we think the SNTP server has stopped sending updates */
+   do{
+ 	  ret = nx_sntp_client_stop(&SntpClient);
+ 	  tx_thread_sleep(WaitTime);
+   }while(ret != NX_SUCCESS);
+   printf("SNTP client stopped\r\n");
+   /* Display RTC time each second */
+   display_rtc_time(&RtcHandle);
 
   /* start the MQTT client thread */
   tx_thread_resume(&AppMQTTClientThread);
   /* Toggling LED after a success Time update */
   while(1)
   {
-    tx_event_flags_set(&SntpFlags, SNTP_RTC_UPDATE_EVENT, TX_OR);
 
-//    HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
-    /* Delay for 1s */
-    tx_thread_sleep(5000);
+	  /* Delay for 30 minutes */
+	  tx_thread_sleep(RESYNC_INTERVAL);
+
+	  printf("\nRe-syncing time...\n");
+	  do{
+		  ret = nx_dns_host_by_name_get(&DnsClient, (UCHAR *)SNTP_SERVER_NAME_1,
+		                                  &sntp_server_ip.nxd_ip_address.v4, NX_APP_DEFAULT_TIMEOUT);
+		  tx_thread_sleep(WaitTime);
+	  }while(ret != NX_SUCCESS);
+
+	  printf("dns host got\r\n");
+	  /* Use the IPv4 service to set up the Client and set the IPv4 SNTP server. */
+	   do{
+		   ret = nx_sntp_client_initialize_unicast(&SntpClient, sntp_server_ip.nxd_ip_address.v4);
+		   tx_thread_sleep(WaitTime);
+	   }while(ret != NX_SUCCESS);
+	   printf("SNTP client intialized unicast\r\n");
+
+	  /* Run whichever service the client is configured for. */
+	   do{
+		   ret = nx_sntp_client_run_unicast(&SntpClient);
+		   tx_thread_sleep(WaitTime);
+	   }while(ret != NX_SUCCESS);
+	   printf("SNTP client run unicast\r\n");
+
+	   PRINT_CNX_SUCC();
+	//   tx_thread_preemption_change(&AppSNTPThread, old_threshold, &old_threshold );
+	  /* Wait for a server update event. */
+	   do{
+		   tx_event_flags_get(&SntpFlags, SNTP_UPDATE_EVENT, TX_OR_CLEAR, &events, PERIODIC_CHECK_INTERVAL);
+		   if( (  (events & SNTP_UPDATE_EVENT) != SNTP_UPDATE_EVENT  )  ){
+			   /* We can stop the SNTP service if for example we think the SNTP server has stopped sending updates */
+			   do{
+			 	  ret = nx_sntp_client_stop(&SntpClient);
+			 	  tx_thread_sleep(WaitTime);
+			   }while(ret != NX_SUCCESS);
+			   printf("SNTP client stopped\r\n");
+			   do{
+			 	  ret = nx_dns_host_by_name_get(&DnsClient, (UCHAR *)SNTP_SERVER_NAME,
+			 	                                  &sntp_server_ip.nxd_ip_address.v4, NX_APP_DEFAULT_TIMEOUT);
+			 	  tx_thread_sleep(WaitTime);
+			   }while(ret != NX_SUCCESS);
+
+			   nx_sntp_client_set_time_update_notify(&SntpClient, time_update_callback);
+			   ret = nx_sntp_client_initialize_unicast(&SntpClient, sntp_server_ip.nxd_ip_address.v4);
+			   tx_thread_sleep(WaitTime);
+			   ret = nx_sntp_client_run_unicast(&SntpClient);
+			   tx_thread_sleep(WaitTime);
+			   PRINT_CNX_SUCC_1();
+		   }
+	   }while( (  (events & SNTP_UPDATE_EVENT) != SNTP_UPDATE_EVENT  ) );
+
+	   printf("SNTP Event Update\r\n");
+	    /* Check for valid SNTP server status. */
+		  do{
+			  ret = nx_sntp_client_receiving_updates(&SntpClient, &server_status);
+			  tx_thread_sleep(WaitTime);
+		  }while((ret != NX_SUCCESS) || (server_status == NX_FALSE));
+		  printf("SNTP client receiving updates\r\n");
+	    /* We have a valid update.  Get the SNTP Client time. */
+	    ret = nx_sntp_client_get_local_time_extended(&SntpClient, &seconds, &fraction, NX_NULL, 0);
+	    printf("SNTP Secconds = %lu \r\n", seconds + 19800 );
+	    do{
+	        ret = nx_sntp_client_utility_display_date_time(&SntpClient,buffer,64);
+	        tx_thread_sleep(WaitTime);
+
+	    }while(ret != NX_SUCCESS);
+
+	    printf("\nSNTP update :\n");
+	    printf("%s\n\n",buffer);
+
+	    /* Set Current time from SNTP TO RTC */
+	    rtc_time_update(&SntpClient);
+	    /* We can stop the SNTP service if for example we think the SNTP server has stopped sending updates */
+	    do{
+	  	  ret = nx_sntp_client_stop(&SntpClient);
+	  	  tx_thread_sleep(WaitTime);
+	    }while(ret != NX_SUCCESS);
+	    printf("SNTP client stopped\r\n");
+	    /* Display RTC time each second */
+	    display_rtc_time(&RtcHandle);
   }
 }
+
+
 /* This application defined handler for handling a Kiss of Death packet is not
 required by the SNTP Client. A KOD handler should determine
 if the Client task should continue vs. abort sending/receiving time data
@@ -1042,7 +1103,7 @@ static void rtc_time_update(NX_SNTP_CLIENT *client_ptr)
   if (HAL_RTC_SetDate(&RtcHandle, &sdatestructure, RTC_FORMAT_BCD) != HAL_OK)
   {
 	printf("RTC Set Date Error\r\n");
-    Error_Handler();
+//    Error_Handler();
   }
   /* Convert time composants to hex format */
   sprintf(temp,"%d", ts.tm_hour);
@@ -1055,7 +1116,7 @@ static void rtc_time_update(NX_SNTP_CLIENT *client_ptr)
   if (HAL_RTC_SetTime(&RtcHandle, &stimestructure, RTC_FORMAT_BCD) != HAL_OK)
   {
 	  printf("RTC Set Time Error\r\n");
-    Error_Handler();
+//    Error_Handler();
   }
 
 }
@@ -1295,8 +1356,8 @@ static inline bool publish_time_to_topic(void){
     ULONG retries = 0;
     static const ULONG max_retries = 5;
     const static ULONG WaitTime = 100;
-
-
+    static ULONG toggle_count = 0;
+    static const ULONG toggle_count_limit = 60;
     /* TODO Get the buffer from User byte pool */
     CHAR message[64];
     char time_string[32];
@@ -1306,7 +1367,12 @@ static inline bool publish_time_to_topic(void){
     /* Toggle device online status for demonstration */
     Device_Online_when_DataCaptured ^=1;
 
-    Input_Status ^= 0xFFFF;
+    if(++toggle_count >= toggle_count_limit){
+		toggle_count = 0;
+		/* Toggle input status for demonstration */
+		Input_Status ^= 0xFFFF;
+	}
+//    Input_Status ^= 0xFFFF;
     /* Prepare the string */
     snprintf(message, sizeof(message), "%s, %s, "
     		"%d, %d, 0x%lx\r\n",

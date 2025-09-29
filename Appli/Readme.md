@@ -32,6 +32,10 @@ The format is based on [Semantic Versioning](https://semver.org/).
 ### [Unreleased]
 - [Add new features, fixes, or changes planned for the next release]
 
+### [V0.6.0] - 30-09-2025
+- Resyncing RTC time from NTP server every 30 minutes
+- Toggling inputs every two minutes
+
 ### [0.3.0] - 03-09-2025
 - Added Netx with ethernet driver for Nucleo H7RS board
 - Added TCP server at port 6000
