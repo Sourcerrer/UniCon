@@ -32,6 +32,9 @@ The format is based on [Semantic Versioning](https://semver.org/).
 ### [Unreleased]
 - [Add new features, fixes, or changes planned for the next release]
 
+### [V0.6.1] - 05-10-2025
+- created a new tcp_server folder and moved tcp server code to that folder. 
+  using cpp files for all the application code
 ### [V0.6.0] - 30-09-2025
 - Resyncing RTC time from NTP server every 30 minutes
 - Toggling inputs every two minutes
