@@ -46,11 +46,9 @@ extern "C" {
 
 /* Exported constants --------------------------------------------------------*/
 /* USER CODE BEGIN EC */
-#define MOSQUITTO_CERT_FILE         "mosquitto.cert.h"
 
 /* All protocol thread priorities */
-#define MQTT_THREAD_PRIORTY         9
-#define MQTT_PRIORITY               10
+
 #define SNTP_PRIORITY               14
 #define TCP_THREAD_PRIORITY         15
 #define LINK_PRIORITY               12
@@ -60,35 +58,7 @@ extern "C" {
 #define DEFAULT_MEMORY_SIZE         1024
 #define DEFAULT_MAIN_PRIORITY       10
 #define APP_QUEUE_SIZE              10
-/* MQTT Client configuration */
-#define MQTT_THREAD_STACK_SIZE               1024 * 3
-#define MQTT_CLIENT_STACK_SIZE      1024 * 10
-#define CLIENT_ID_STRING            "IUC_MQTT_client_ID"
-#define MQTT_KEEP_ALIVE_TIMER       60                    /* Define the MQTT keep alive timer for 60 seconds */
-#define CLEAN_SESSION               NX_TRUE
-#define STRLEN(p)                   (sizeof(p) - 1)
-//#define TOPIC_NAME                  "Temperature"
-#define TOPIC_NAME                  "IUC/data"
 
-#define NB_MESSAGE                  10                    /*  if NB_MESSAGE = 0, client will publish messages infinitely */
-#define MQTT_BROKER_NAME            "test.mosquitto.org" /* MQTT Server */
-#define MQTT_PORT                   NXD_MQTT_TLS_PORT
-#define QOS0                        0
-#define QOS1                        1
-
-typedef enum {
-	emqtt_connected 			= ( (ULONG)(1UL << 0UL) ),
-	emqtt_subscribed	 		= ( (ULONG)(1UL << 1UL) ),
-	emqtt_unsubscribed 			= ( (ULONG)(1UL << 2UL) ),
-	emqtt_message_received  	= ( (ULONG)(1UL << 3UL) ),
-	emqtt_message_published 	= ( (ULONG)(1UL << 4UL) ),
-
-	emqtt_all_events 		= ( emqtt_connected |
-								emqtt_subscribed |
-								emqtt_unsubscribed |
-								emqtt_message_received |
-								emqtt_message_published ),
-} e_mqtt_event_type;
 #define DEMO_MESSAGE_EVENT          1
 #define DEMO_ALL_EVENTS             3
 /* SNTP Client configuration */

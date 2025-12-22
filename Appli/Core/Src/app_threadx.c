@@ -24,7 +24,8 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "main.h"
-
+#include <stdbool.h>
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -109,11 +110,66 @@ void MX_ThreadX_Init(void)
 }
 
 /* USER CODE BEGIN 1 */
+#define DIN_ON  GPIO_PIN_RESET
+#define DIN_OFF GPIO_PIN_SET
 void  myThread_Startup_entry(ULONG thread_input)
 {
+	extern volatile bool is_mqtt_client_connected;
     const static ULONG sleep_time = 250;
+    bool ArmState = false;
+    bool mqtt_Din = false;
+    /* switch on power on led */
+    HAL_GPIO_WritePin( LED_POWER_ON_GPIO_Port, LED_POWER_ON_Pin, GPIO_PIN_SET);
+
 	while (1)
     {
+//		/* Get the ARM Disarm input from mqtt topic */
+////		ArmState = true; // Just for testing purpose
+
+		if(HAL_GPIO_ReadPin(DIN1_GPIO_Port, DIN1_Pin) == DIN_ON){
+			HAL_GPIO_WritePin(LED_DIN2_GPIO_Port, LED_DIN2_Pin, GPIO_PIN_SET);
+			printf("Input1 ON\r\n");
+		}
+		else{
+			HAL_GPIO_WritePin(LED_DIN2_GPIO_Port, LED_DIN2_Pin, GPIO_PIN_RESET);
+		}
+
+		if(HAL_GPIO_ReadPin(DIN2_GPIO_Port, DIN2_Pin) == DIN_ON){
+			HAL_GPIO_WritePin(LED_DIN1_GPIO_Port, LED_DIN1_Pin, GPIO_PIN_SET);
+			printf("Input 2 ON\r\n");
+		}
+		else{
+			HAL_GPIO_WritePin(LED_DIN1_GPIO_Port, LED_DIN1_Pin, GPIO_PIN_RESET);
+		}
+
+
+		/* Check for the inputs and switch on the LEDs & outputs */
+		if(HAL_GPIO_ReadPin(DIN1_GPIO_Port, DIN1_Pin) == DIN_ON ||
+		   HAL_GPIO_ReadPin(DIN2_GPIO_Port, DIN2_Pin) == DIN_ON){
+			HAL_GPIO_WritePin(DOUT1_GPIO_Port, DOUT1_Pin, GPIO_PIN_SET);
+			printf("Output ON\r\n");
+		}
+		else{
+			HAL_GPIO_WritePin(DOUT1_GPIO_Port, DOUT1_Pin, GPIO_PIN_RESET);
+			printf("Both Input OFF\r\n");
+		}
+
+		/* Check for ARM Disarm Input */
+
+		/* If input from mqtt is switched on then DOUt 2 will be ON */
+
+		/* Output 1 will switched on if input 1 or input 2 is ON */
+		if(is_mqtt_client_connected){
+			/* toggle the conectivity led*/
+			HAL_GPIO_TogglePin(LED_CONNECTIVITY_GPIO_Port, LED_CONNECTIVITY_Pin);
+		}
+		else{
+			/* switch off the conectivity led*/
+			HAL_GPIO_WritePin( LED_CONNECTIVITY_GPIO_Port,
+					           LED_CONNECTIVITY_Pin, GPIO_PIN_RESET);
+		}
+
+		/* Check Arm disarm input */
 		HAL_GPIO_TogglePin(GPIOD, GPIO_PIN_13);
     	tx_thread_sleep(sleep_time); // Sleep for 100 ticks
 
