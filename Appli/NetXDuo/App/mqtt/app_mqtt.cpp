@@ -79,9 +79,19 @@ uint16_t app_mqtt_init( void *byte_pool, NX_PACKET_POOL *packet_pool,
 			stack_ptr, stack_size,
 			MQTT_PRIORITY, MQTT_PRIORITY,
 			TX_NO_TIME_SLICE, TX_DONT_START);
-	MSG_DEBUG("Nx_MQTT_Client application started..\n");
+	std::cout << LOG_LOC << "MQTT client thread created with status: " << ret << std::endl;
 
-
+	//  {
+	//	  /* Create a byte pool for the messages used to */
+	//	  /* Create a queue to receive messages from topic */
+	//
+	//	  /* Create a queue to send messages to a topic
+	//	   * The message structure in queue is
+	//	   * 1. pointer to the topic name
+	//	   * 2. pointer to the message to be sent
+	//	   * 3. Type of message being sent
+	//	   * 4.  */
+	//  }
 	return ret;
 
 }
@@ -153,6 +163,14 @@ static inline bool get_mqtt_broker_ip_address(NX_DNS *ptrDnsClient ,ULONG *ip_ad
 			( (*ip_address) >> 8) & 0xff,
 			( (*ip_address) ) & 0xff );
 
+	std::cout << LOG_LOC << "MQTT broker IP address resolved successfully.\r\n"
+//			  << "MQTT broker address: "
+//			  << ( (*ip_address) >> 24) & 0xff << "."
+//			  << ( (*ip_address) >> 16) & 0xff << "."
+//			  << ( (*ip_address) >> 8) & 0xff << "."
+//			  << ( (*ip_address) ) & 0xff
+			  << std::endl;
+
 	return true;
 }
 
@@ -220,7 +238,7 @@ static inline bool connect_to_mqtt_broker(NXD_ADDRESS *mqtt_server_ip){
 	}while(ret != NX_SUCCESS && retry++ < MAX_RETRIES);
 
 	if (ret != NX_SUCCESS){
-		std::cerr << "\nMQTT client failed to connect to broker < "
+		std::cerr << LOG_LOC <<"\nMQTT client failed to connect to broker < "
 				  << MQTT_BROKER_NAME << " >, error: 0x"
 				  << std::hex << ret << std::dec << std::endl;
 		return false;
@@ -234,7 +252,8 @@ static inline bool connect_to_mqtt_broker(NXD_ADDRESS *mqtt_server_ip){
 	return true;
 }
 
-static const char *Device_Id = "v6/001"; //example device id
+static const char *Device_Id = "IUC/001"; //example device id
+//static const char *Device_Id = "v6/001"; //example device id
 static bool Power_Status = true; //example power status
 static bool Device_Online_when_DataCaptured = true; //example device online status
 static uint32_t Input_Status = 0x5A5A; //example input status
@@ -249,8 +268,9 @@ static inline bool publish_time_to_topic(std::string_view topic){
 
     /* TODO Get the buffer from User byte pool */
 //    CHAR message[100];
-    char time_string[32];
-    rtc_time_to_buffer(&RtcHandle, time_string, sizeof(time_string));
+//    char time_string[32];
+    std::string time_string{"23rd Oct 2025 14:30:00"}; //placeholder for time string
+//    rtc_time_to_buffer(&RtcHandle, time_string, sizeof(time_string));
     /* Toggle power status for demonstration */
     Power_Status ^=1;
     /* Toggle device online status for demonstration */
@@ -283,8 +303,9 @@ static inline bool publish_time_to_topic(std::string_view topic){
 //				  << ", MESSAGE = " << message << std::endl;
 		return true;
 	}
-
-    printf("MQTT publish failed after %ld retries,\r\n", retries);
+    std::cout << LOG_LOC << "MQTT publish failed after "
+			  << retries << " retries." << std::endl;
+//    printf("MQTT publish failed after %ld retries,\r\n", retries);
     return false;
 
 }
@@ -315,7 +336,8 @@ static inline bool mqtt_client_disconnect(void){
 	ret = nxd_mqtt_client_disconnect(&MqttClient);
 
 	if (ret != NX_SUCCESS){
-		printf("MQTT disconnect failed\r\n");
+		std::cerr << LOG_LOC << "MQTT disconnect failed" << std::endl;
+//		printf("MQTT disconnect failed\r\n");
 		return false;
 	}
 	printf("MQTT client disconnected\r\n");
@@ -410,6 +432,9 @@ static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input)
 
 	if( connect_to_mqtt_broker(&mqtt_server_ip) == false ){
 		/* TODO handle connection to a different broker */
+		std::cerr << LOG_LOC
+				  << "Failed to connect to MQTT broker, suspending thread."
+				  << std::endl;
 		tx_thread_suspend(tx_thread_identify());
 	}
 

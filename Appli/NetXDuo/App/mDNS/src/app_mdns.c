@@ -18,7 +18,7 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "msg.h"
-#include "app_netxduo.h"
+#include "nxd_mdns.h"
 
 static NX_MDNS_SERVICE ServiceInstance;
 extern NX_MDNS MdnsInstance;

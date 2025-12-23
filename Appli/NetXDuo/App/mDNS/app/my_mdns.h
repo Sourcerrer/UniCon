@@ -12,7 +12,7 @@
 
 
 #define APP_MDNS_THREAD_STACK_SIZE           (4096)
-#define APP_MDNS_THREAD_PRIORITY             (13)
+#define APP_MDNS_THREAD_PRIORITY             (20)
 
 #define NETX_MDNS_THREAD_STACK_SIZE          (4096)
 #define NETX_MDNS_THREAD_PRIORITY            (12)

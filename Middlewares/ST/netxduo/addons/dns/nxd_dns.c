@@ -2469,7 +2469,7 @@ UINT  _nxd_dns_host_by_name_get(NX_DNS *dns_ptr, UCHAR *host_name, NXD_ADDRESS *
                                 ULONG wait_option, UINT lookup_type)
 {
 
-UINT        status;
+UINT        status = NX_SUCCESS;
 UINT        record_count = 0;
         
                                  

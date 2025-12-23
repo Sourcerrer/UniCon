@@ -78,6 +78,11 @@ typedef enum
 #define SERVICE_WEIGHT 					(USHORT)0
 static const UCHAR service_txt[] = "path=/";
 
+/* New: Peppermint UDP service definitions for ports 6000/6001 */
+#define SERVICE_INSTANCE_NAME_UDP6000   (UCHAR *)"Peppermint UDP 6000"
+#define SERVICE_INSTANCE_NAME_UDP6001   (UCHAR *)"Peppermint UDP 6001"
+#define SERVICE_NAME_PPMT_UDP           (UCHAR *)"_peppermint._udp"
+
 #define MDNS_LOCAL_CACHE_SIZE 1024 * 2  // 2 KB for local records
 #define MDNS_PEER_CACHE_SIZE  1024 * 2   // 2 KB for peer records
 

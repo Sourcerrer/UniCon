@@ -23,8 +23,11 @@
 
   <img src="images/Data_Rec_from_test_mosquitto.png" alt="Data Received from test.mosquitto.org" style="width:50%;">
 
+- Use ```Resolve-DnsName unicon.local``` to check if the mDNS is working fine.
+
 ## Project Creation and Flashing
-- abc
+- Check if the external_loader.stldr is present in the ""UniCon_ExtMemLoader/debug"
+  folder. If not copy the .elf file and reaname as .stldr. Add it to the debug configuration of the application project. 
 
 
 ## Changelog

@@ -128,7 +128,7 @@ void  myThread_Startup_entry(ULONG thread_input)
 
 		if(HAL_GPIO_ReadPin(DIN1_GPIO_Port, DIN1_Pin) == DIN_ON){
 			HAL_GPIO_WritePin(LED_DIN2_GPIO_Port, LED_DIN2_Pin, GPIO_PIN_SET);
-			printf("Input1 ON\r\n");
+//			printf("Input1 ON\r\n");
 		}
 		else{
 			HAL_GPIO_WritePin(LED_DIN2_GPIO_Port, LED_DIN2_Pin, GPIO_PIN_RESET);
@@ -136,7 +136,7 @@ void  myThread_Startup_entry(ULONG thread_input)
 
 		if(HAL_GPIO_ReadPin(DIN2_GPIO_Port, DIN2_Pin) == DIN_ON){
 			HAL_GPIO_WritePin(LED_DIN1_GPIO_Port, LED_DIN1_Pin, GPIO_PIN_SET);
-			printf("Input 2 ON\r\n");
+//			printf("Input 2 ON\r\n");
 		}
 		else{
 			HAL_GPIO_WritePin(LED_DIN1_GPIO_Port, LED_DIN1_Pin, GPIO_PIN_RESET);
@@ -147,11 +147,11 @@ void  myThread_Startup_entry(ULONG thread_input)
 		if(HAL_GPIO_ReadPin(DIN1_GPIO_Port, DIN1_Pin) == DIN_ON ||
 		   HAL_GPIO_ReadPin(DIN2_GPIO_Port, DIN2_Pin) == DIN_ON){
 			HAL_GPIO_WritePin(DOUT1_GPIO_Port, DOUT1_Pin, GPIO_PIN_SET);
-			printf("Output ON\r\n");
+//			printf("Output ON\r\n");
 		}
 		else{
 			HAL_GPIO_WritePin(DOUT1_GPIO_Port, DOUT1_Pin, GPIO_PIN_RESET);
-			printf("Both Input OFF\r\n");
+//			printf("Both Input OFF\r\n");
 		}
 
 		/* Check for ARM Disarm Input */
