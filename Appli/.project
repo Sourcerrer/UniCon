@@ -175,6 +175,11 @@
 			<locationURI>PARENT-1-PROJECT_LOC/Middlewares/ST/netxduo/addons/sntp/nxd_sntp_client.c</locationURI>
 		</link>
 		<link>
+			<name>Middlewares/NetXDuo/Network/NetXDuo/Addons mDNS/nxd_mdns.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Middlewares/ST/netxduo/addons/mdns/nxd_mdns.c</locationURI>
+		</link>
+		<link>
 			<name>Middlewares/NetXDuo/Network/NetXDuo/Crypto/nx_crypto_3des.c</name>
 			<type>1</type>
 			<locationURI>PARENT-1-PROJECT_LOC/Middlewares/ST/netxduo/crypto_libraries/src/nx_crypto_3des.c</locationURI>

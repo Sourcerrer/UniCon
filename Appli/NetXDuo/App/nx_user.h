@@ -1818,9 +1818,7 @@
 */
 
 /* Disable the mDNS Client functionality.  By default, mDNS client function is enabled. */
-/*
 #define NX_MDNS_DISABLE_CLIENT
-*/
 
 /*****************************************************************************/
 /******************** Configuration options for PPP **************************/
