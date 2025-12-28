@@ -402,8 +402,10 @@ static inline bool is_mqtt_broker_reachable(ULONG ip_address){
 
 static inline bool connect_to_mqtt_broker(NXD_ADDRESS *mqtt_server_ip){
 	UINT ret;
-	  ret = nxd_mqtt_client_secure_connect(&MqttClient, mqtt_server_ip, MQTT_PORT, tls_setup_callback,
-	                                       MQTT_KEEP_ALIVE_TIMER, CLEAN_SESSION, NX_WAIT_FOREVER);
+	  ret = nxd_mqtt_client_secure_connect( &MqttClient, mqtt_server_ip,
+			  	  	  	  	  	  	  	  	MQTT_PORT, tls_setup_callback,
+	                                        MQTT_KEEP_ALIVE_TIMER,
+											CLEAN_SESSION, NX_WAIT_FOREVER);
 
 	  if (ret != NX_SUCCESS){
 	    printf("\nMQTT client failed to connect to broker < %s >.\n",MQTT_BROKER_NAME);
@@ -532,7 +534,8 @@ static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input)
   /* Create MQTT client instance. */
   ret = nxd_mqtt_client_create( &MqttClient, "my_client", CLIENT_ID_STRING,
 		  	  	  	  	  	  	STRLEN(CLIENT_ID_STRING), &NetXDuoEthIpInstance,
-								&NxAppPool, (VOID*)mqtt_client_stack, MQTT_CLIENT_STACK_SIZE,
+								&NxAppPool, (VOID*)mqtt_client_stack,
+								MQTT_CLIENT_STACK_SIZE,
                                 MQTT_THREAD_PRIORTY, NX_NULL, 0);
 
   if (ret != NX_SUCCESS)

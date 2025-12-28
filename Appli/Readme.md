@@ -10,6 +10,10 @@
 - mqtt
 
 ## Testing
+- For mosquitto broker on local server 
+    - ```Get-Service mosquitto``` to be run in powershell to check if the mosquitto broker is running
+    - ```Start-Service mosquitto``` to start the mosquitto broker service
+    - ```mosquitto_pub -h localhost -t "IUC/data" -m "Hello from local broker"``` to publish data to the topic "IUC/data" on local mosquitto broker
 - Use the below command to get data from the topic "IUC/data" on test.mosquitto.org broker using TLSv1.2
   > **Note:** Run this in the UniCon_Appli project folder
   ```

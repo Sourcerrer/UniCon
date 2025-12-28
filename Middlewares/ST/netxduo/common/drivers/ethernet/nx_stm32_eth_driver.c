@@ -2115,21 +2115,80 @@ static UINT  _nx_driver_hardware_packet_send(NX_PACKET *packet_ptr)
 /*                                            resulting in version 6.1    */
 /*                                                                        */
 /**************************************************************************/
-static UINT  _nx_driver_hardware_multicast_join(NX_IP_DRIVER *driver_req_ptr)
+//static UINT  _nx_driver_hardware_multicast_join(NX_IP_DRIVER *driver_req_ptr)
+//{
+//
+//
+//  /* Increase the multicast count.  */
+//  nx_driver_information.nx_driver_information_multicast_count++;
+//
+//  /* Enable multicast frame reception.  */
+//  FilterConfig.PassAllMulticast = ENABLE;
+//  HAL_ETH_SetMACFilterConfig(&eth_handle, &FilterConfig);
+//
+//  /* Return success.  */
+//  return(NX_SUCCESS);
+//}
+
+/* @brief - Multicast Join Implementation that brute-forces the Hash Table to
+ * accept all multicast.
+ *
+ * This implementation ignores the actual multicast address requested, and
+ * instead opens the entire hash table. This guarantees that mDNS (and any
+ * other multicast) will be accepted by the hardware filter.
+ *
+ * This is less efficient than a proper implementation, but is much simpler
+ * and ensures compatibility with mDNS.
+ */
+static UINT _nx_driver_hardware_multicast_join(NX_IP_DRIVER *driver_req_ptr)
 {
+  /* 1. Map IP to MAC (Standard Logic) */
+  ULONG ip_address = driver_req_ptr->nx_ip_driver_physical_address_msw;
 
+/* DEBUG: Print the IP NetX is trying to join */
+  /* Break it down into A.B.C.D format */
+  printf("NetX Joining Multicast Group: %lu.%lu.%lu.%lu (Hex: %08X)\n",
+          (ip_address >> 24) & 0xFF,
+          (ip_address >> 16) & 0xFF,
+          (ip_address >> 8)  & 0xFF,
+          (ip_address)       & 0xFF,
+          (unsigned int)ip_address);
+  /* We don't even need to map the MAC or Calculate CRC.
+     We are going to open the entire table. */
 
-  /* Increase the multicast count.  */
+  /* 2. FORCE HASH TABLE OPEN (Brute Force) */
+  /* Setting both registers to 0xFFFFFFFF opens EVERY Hash Bucket. */
+  /* This guarantees mDNS (and any other multicast) passes the filter. */
+  uint32_t current_hash[2];
+  current_hash[0] = 0xFFFFFFFF; /* High Register: All 1s */
+  current_hash[1] = 0xFFFFFFFF; /* Low Register:  All 1s */
+
+  /* 3. Write Hash Table Back to Hardware */
+  HAL_ETH_SetHashTable(&eth_handle, current_hash);
+
+  /* 4. Configure Filter Policy */
+  ETH_MACFilterConfigTypeDef FilterConfig;
+  HAL_ETH_GetMACFilterConfig(&eth_handle, &FilterConfig);
+
+  /* SETTINGS */
+  FilterConfig.PromiscuousMode  = DISABLE; /* Disable Promiscuous (Stops Unicast junk) */
+  FilterConfig.PassAllMulticast = DISABLE; /* Disable PassAll (We use Hash instead) */
+
+  /* ENABLE Hash Multicast */
+  /* Since we set the table to All 1s, this effectively accepts all multicast */
+  /* but uses the correct hardware path. */
+  FilterConfig.HashMulticast    = ENABLE;
+
+  FilterConfig.BroadcastFilter  = DISABLE; /* Allow Broadcasts (ARP) */
+
+  /* Apply */
+  if (HAL_ETH_SetMACFilterConfig(&eth_handle, &FilterConfig) != HAL_OK) {
+    return NX_DRIVER_ERROR;
+  }
+
   nx_driver_information.nx_driver_information_multicast_count++;
-
-  /* Enable multicast frame reception.  */
-  FilterConfig.PassAllMulticast = ENABLE;
-  HAL_ETH_SetMACFilterConfig(&eth_handle, &FilterConfig);
-
-  /* Return success.  */
-  return(NX_SUCCESS);
+  return NX_SUCCESS;
 }
-
 /**************************************************************************/
 /*                                                                        */
 /*  FUNCTION                                               RELEASE        */

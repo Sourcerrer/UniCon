@@ -252,7 +252,12 @@ UINT MX_NetXDuo_Init(VOID *memory_ptr)
   /* Create the DHCP client */
 
   /* USER CODE BEGIN DHCP_Protocol_Initialization */
-
+  /* Ensure IGMP is enabled on the IP instance */
+  ret = nx_igmp_enable(&NetXDuoEthIpInstance);
+  if (ret != NX_SUCCESS) {
+    printf("Error: nx_igmp_enable failed: 0x%02x\r\n", ret);
+    return NX_NOT_SUCCESSFUL;
+  }
   /* USER CODE END DHCP_Protocol_Initialization */
 
   ret = nx_dhcp_create(&DHCPClient, &NetXDuoEthIpInstance, "DHCP Client");

@@ -833,9 +833,7 @@
    of zero disables expiration or aging of ARP entries and is defined in
    nx_api.h. The application can override the default by defining the value
    before nx_api.h is included. */
-/*
-#define NX_ARP_EXPIRATION_RATE            0
-*/
+#define NX_ARP_EXPIRATION_RATE          300
 
 /* Specifies the number of seconds between ARP retries. The default value is 10,
    which represents 10 seconds, and is defined in nx_api.h. The application can

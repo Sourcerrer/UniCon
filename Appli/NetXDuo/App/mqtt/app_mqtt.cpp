@@ -189,6 +189,9 @@ static inline bool is_mqtt_broker_reachable(ULONG ip_address, NX_IP *NetXDuoEthI
 				NULL, 0, &ping_response, PING_TIMEOUT);
 		if (ret == NX_SUCCESS) {
 //			printf("Ping to %s: Success\n", MQTT_BROKER_NAME);
+			std::cout << LOG_LOC << "Ping to "
+					  << MQTT_BROKER_NAME
+					  << " successful." << std::endl;
 			nx_packet_release(ping_response);
 			break;
 		}
@@ -225,15 +228,17 @@ static inline bool secure_connect_to_mqtt_broker(NXD_ADDRESS *mqtt_server_ip){
 
 static inline bool connect_to_mqtt_broker(NXD_ADDRESS *mqtt_server_ip){
 	UINT ret;
-	const static uint16_t MAX_RETRIES = 3;
+	const static uint16_t MAX_RETRIES = 5;
 	uint16_t retry = 0;
 
 	do{
 		/* Try to connect to the MQTT broker */
-		ret = nxd_mqtt_client_connect(  &MqttClient, mqtt_server_ip, MQTT_PORT,
-										MQTT_KEEP_ALIVE_TIMER, CLEAN_SESSION, DEFAULT_TIMEOUT);
+		ret = nxd_mqtt_client_connect(  &MqttClient, mqtt_server_ip,
+										MQTT_PORT,
+										MQTT_KEEP_ALIVE_TIMER,
+										CLEAN_SESSION, DEFAULT_TIMEOUT);
 		if (ret != NX_SUCCESS){
-			tx_thread_sleep(DEFAULT_TIMEOUT * 2);;
+			tx_thread_sleep(DEFAULT_TIMEOUT * 2);
 		}
 	}while(ret != NX_SUCCESS && retry++ < MAX_RETRIES);
 
@@ -370,9 +375,10 @@ static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input)
 	if (tx_byte_allocate( mqtt_client_info->byte_pool,
 						  (VOID **) &pointer, MQTT_CLIENT_STACK_SIZE, TX_NO_WAIT) != TX_SUCCESS)
 	{
-//		log_e("Failed to allocate memory for MQTT client stack");
-		std::cerr << LOG_LOC << "Failed to allocate memory for MQTT client stack" << std::endl;
-		Error_Handler();
+		std::cerr << LOG_LOC << "Failed to allocate memory for MQTT client stack"
+				  << "Suspending MQTT thread."
+				  << std::endl;
+		tx_thread_suspend(tx_thread_identify());
 	}
 	/*TODO Create the mqtt_client_stack from NX_Pool */
 	/* Create MQTT client instance. */
