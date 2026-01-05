@@ -17,7 +17,7 @@
 #define MQTT_PRIORITY               10
 #define MQTT_STACK_SIZE             1024 * 6
 #define CLIENT_ID_STRING            "MQTT_client_ID"
-#define MQTT_THREAD_PRIORTY         2
+#define MQTT_THREAD_PRIORTY         12
 #define MQTT_KEEP_ALIVE_TIMER       60                    /* Define the MQTT keep alive timer for 60 seconds */
 #define CLEAN_SESSION               NX_TRUE
 #define STRLEN(p)                   (sizeof(p) - 1)

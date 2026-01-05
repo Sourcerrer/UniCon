@@ -1443,7 +1443,9 @@
 /* Defined, application must use TLS to connect to MQTT broker. This feature
    requires NX_SECURE_ENABLE defined. By default, this symbol is not
    defined. */
+/*
 #define NXD_MQTT_REQUIRE_TLS
+*/
 
 /* Defines the time out in the TCP socket disconnect call when disconnecting
    from the MQTT server in timer ticks. The default value is NX_WAIT_FOREVER. */

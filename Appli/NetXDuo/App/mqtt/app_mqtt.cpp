@@ -30,7 +30,7 @@ static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input);
   ==============================================================================*/
 
 /* MQTT configurations */
-#define IS_BROKER_REMOTE  1 //1 if broker is remote, 0 if broker is on local network
+#define IS_BROKER_REMOTE  0 //1 if broker is remote, 0 if broker is on local network
 /* END MQTT configurations */
 volatile bool is_mqtt_client_connected = false; /* this variable is set & reset in */
 
@@ -431,7 +431,7 @@ static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input)
 #else
 	/* Set MQTT server IP directly */
 	mqtt_server_ip.nxd_ip_version = NX_IP_VERSION_V4;
-	mqtt_server_ip.nxd_ip_address.v4 = IP_ADDRESS(192, 168, 0, 213); // 192.168.0.239
+	mqtt_server_ip.nxd_ip_address.v4 = IP_ADDRESS(192, 168, 0, 83); // 192.168.0.239
 #endif
 	is_mqtt_broker_reachable(mqtt_server_ip.nxd_ip_address.v4, mqtt_client_info->ip_instance);
 	/* Start a secure connection to the server. */
