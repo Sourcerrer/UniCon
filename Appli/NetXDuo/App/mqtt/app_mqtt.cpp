@@ -30,7 +30,7 @@ static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input);
   ==============================================================================*/
 
 /* MQTT configurations */
-#define IS_BROKER_REMOTE  0 //1 if broker is remote, 0 if broker is on local network
+#define IS_BROKER_REMOTE  1 //1 if broker is remote, 0 if broker is on local network
 /* END MQTT configurations */
 volatile bool is_mqtt_client_connected = false; /* this variable is set & reset in */
 
@@ -230,14 +230,18 @@ static inline bool connect_to_mqtt_broker(NXD_ADDRESS *mqtt_server_ip){
 	UINT ret;
 	const static uint16_t MAX_RETRIES = 5;
 	uint16_t retry = 0;
-
+	const static ULONG connection_timeout = 150 * NX_IP_PERIODIC_RATE; // 5 seconds
 	do{
 		/* Try to connect to the MQTT broker */
 		ret = nxd_mqtt_client_connect(  &MqttClient, mqtt_server_ip,
 										MQTT_PORT,
 										MQTT_KEEP_ALIVE_TIMER,
-										CLEAN_SESSION, DEFAULT_TIMEOUT);
+										CLEAN_SESSION, connection_timeout);
 		if (ret != NX_SUCCESS){
+			std::cerr << LOG_LOC << "\nMQTT client failed to connect to broker < "
+					  << MQTT_BROKER_NAME << " >, retry "
+					  << retry + 1 << " of " << MAX_RETRIES
+					  << ", error: 0x" << std::hex << ret << std::dec << std::endl;
 			tx_thread_sleep(DEFAULT_TIMEOUT * 2);
 		}
 	}while(ret != NX_SUCCESS && retry++ < MAX_RETRIES);
@@ -268,6 +272,9 @@ static inline bool publish_time_to_topic(std::string_view topic){
 	static UINT message_count = 0;
     ULONG retries = 0;
     static const ULONG max_retries = 5;
+	const static ULONG wait_time = 150 * NX_IP_PERIODIC_RATE; // 5 seconds
+	/* 2. Use NX_FALSE for Retain unless this is a Status Message */
+	static UINT retain_flag = NX_TRUE;
     extern RTC_HandleTypeDef RtcHandle;
 //    const static ULONG WaitTime = 100;
 
@@ -295,7 +302,7 @@ static inline bool publish_time_to_topic(std::string_view topic){
     do{
     	ret = nxd_mqtt_client_publish(&MqttClient, const_cast<CHAR *>( topic.data() ), topic.length(),
     	                                  static_cast<CHAR *>( message.data() ), message.length(),
-										  NX_TRUE, QOS1, NX_WAIT_FOREVER);
+										  retain_flag, QOS1, wait_time);
     	if (ret != NX_SUCCESS)
     	{
     		std::cerr << "MQTT publish failed, 0x" << std::hex << ret << std::dec << std::endl;
@@ -304,8 +311,8 @@ static inline bool publish_time_to_topic(std::string_view topic){
     }while(ret != NX_SUCCESS && retries++ < max_retries);
 
     if(ret == NX_SUCCESS){
-//    	std::cout << "Message " << ++message_count << " published: TOPIC = " << topic
-//				  << ", MESSAGE = " << message << std::endl;
+    	std::cout << "Message " << ++message_count << " published: TOPIC = " << topic
+				  << ", MESSAGE = " << message << std::endl;
 		return true;
 	}
     std::cout << LOG_LOC << "MQTT publish failed after "
@@ -362,8 +369,8 @@ static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input)
 	static const ULONG SLEEP_AFTER_DISCONNECT = (100 * NX_IP_PERIODIC_RATE); // 10 secs
 	mqtt_server_ip.nxd_ip_version = 4;
 	ULONG actual_event_flags = 0;
-    static const constexpr std::string_view topic = "ppmt/v6/data1";
-    static const constexpr std::string_view client_id_string = "v6_001";
+    static const constexpr std::string_view topic = "IUC/data";
+    static const constexpr std::string_view client_id_string = "IUC_001";
 
 	/******************************************************/
     //get the mqtt client info from the thread input
