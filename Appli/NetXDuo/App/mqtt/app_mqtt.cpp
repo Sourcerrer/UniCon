@@ -15,7 +15,7 @@
 #include "app_mqtt.h"
 #include "app_threadx.h"
 #include "log_util.h"
-
+#include "netx_util.h"
 
 TX_THREAD AppMQTTClientThread;
 NXD_MQTT_CLIENT MqttClient;
@@ -148,7 +148,7 @@ static inline bool get_mqtt_broker_ip_address(NX_DNS *ptrDnsClient ,ULONG *ip_ad
 	UINT ret;
 	do{
 		ret = nx_dns_host_by_name_get(ptrDnsClient, (UCHAR *)MQTT_BROKER_NAME,
-				ip_address, DEFAULT_TIMEOUT);
+				ip_address, DEFAULT_TIMEOUT * 2);
 		if (ret != NX_SUCCESS)
 		{
 			printf("DNS look up failed, error: 0x%x. Retrying...\n", ret);
@@ -453,6 +453,12 @@ static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input)
 
 	//wait for connection event flag
 	tx_event_flags_get(&mqtt_app_flag, emqtt_connected, TX_AND, &actual_event_flags, NX_WAIT_FOREVER);
+
+	/* Get public IP address */
+
+	Get_Public_IP( mqtt_client_info->ip_instance,
+				   mqtt_client_info->packet_pool,
+				   mqtt_client_info->dns_client_ptr );
 	/* Subscribe to topic on the broker */
 //	ret = nxd_mqtt_client_subscribe(&MqttClient, TOPIC_NAME, STRLEN(TOPIC_NAME), QOS1);
 	while(1){

@@ -272,14 +272,6 @@ UINT MX_NetXDuo_Init(VOID *memory_ptr)
 
   /* USER CODE BEGIN MX_NetXDuo_Init */
 
-//  {
-//	  /* Initialize the TCP server over local network */
-//	  UINT tcp_server_init(void *byte_pool);
-//	  tcp_server_init(byte_pool);
-//  }
-  /* Set DHCP notification callback  */
-//  tx_semaphore_create(&TCPSemaphore, "TCP Semaphore", 0);
-
   /* Allocate the memory for SNTP client thread */
   if (tx_byte_allocate(byte_pool, (VOID **) &pointer, SNTP_CLIENT_THREAD_MEMORY, TX_NO_WAIT) != TX_SUCCESS)
   {
@@ -305,6 +297,7 @@ UINT MX_NetXDuo_Init(VOID *memory_ptr)
     return NX_NOT_ENABLED;
   }
 
+  /* Create a link thread to monitor the network */
   /* Create the Event Flags Group for Link Status */
     ret = tx_event_flags_create(&link_event_group, "Link Event Group");
     if (ret != TX_SUCCESS)
@@ -312,57 +305,56 @@ UINT MX_NetXDuo_Init(VOID *memory_ptr)
         printf("Failed to create link event group: 0x%02X\n", ret);
         return ret;
     }
+    /* Allocate the memory for Link thread   */
+    if (tx_byte_allocate(byte_pool, (VOID **) &pointer,LINK_STACK, TX_NO_WAIT) != TX_SUCCESS){
+      return TX_POOL_ERROR;
+    }
 
-  {
-	  /* Initialize the MDNS service */
-	  UINT mdns_init( void *byte_pool, NX_IP *ip_instance, NX_PACKET_POOL *packet_pool);
-	  ret = mdns_init( (void *)byte_pool, &NetXDuoEthIpInstance, &NxAppPool);
-	  if (ret != TX_SUCCESS){
-		  printf("MDNS Init failed\r\n");
-		  return NX_NOT_ENABLED;
-	  }
-  }
+    /* Create the Link thread */
+    ret = tx_thread_create( &AppLinkThread, "App Link Thread", App_Link_Thread_Entry,
+  		  	  	  	  	  0, pointer, LINK_STACK,
+                            LINK_PRIORITY, LINK_PRIORITY,
+  						  TX_NO_TIME_SLICE, TX_AUTO_START);
 
-  {
-	  /* Initialize UDP Server */
-	  printf("UDP Server Init..\n");
-	  uint16_t app_udp_server_init( void *byte_pool, NX_IP *ip_instance, NX_PACKET_POOL *packet_pool);
-	  ret = app_udp_server_init((void *)byte_pool, &NetXDuoEthIpInstance, &NxAppPool);
-	  if (ret != TX_SUCCESS){
-		  printf("udp server Init failed\r\n");
-		  return NX_NOT_ENABLED;
-	  }
-  }
+    if (ret != TX_SUCCESS){ return NX_NOT_ENABLED; }
+    /* END of Link thread initialization */
 
-  {
-	  /* Initialize mqtt client */
-	  uint16_t app_mqtt_init( void *byte_pool, NX_PACKET_POOL *packet_pool,
-	  						NX_IP *ip_instance, NX_DNS *dns_client_ptr );
-	  uint16_t ret = app_mqtt_init( (void *)byte_pool, &NxAppPool,
-			  	  	  	  	  	  &NetXDuoEthIpInstance,
-								  &DnsClient );
-	  if(ret != TX_SUCCESS){
-		  printf("MQTT Init failed\r\n");
-		  return NX_NOT_ENABLED;
-	  }
-  }
+    /* START of Applications Initialisation ******************************/
+    {
+    	/* Initialize the MDNS service */
+    	UINT mdns_init( void *byte_pool, NX_IP *ip_instance, NX_PACKET_POOL *packet_pool);
+    	ret = mdns_init( (void *)byte_pool, &NetXDuoEthIpInstance, &NxAppPool);
+    	if (ret != TX_SUCCESS){
+    		printf("MDNS Init failed\r\n");
+    		return NX_NOT_ENABLED;
+    	}
+    }
 
-  /* Allocate the memory for Link thread   */
-  if (tx_byte_allocate(byte_pool, (VOID **) &pointer,LINK_STACK, TX_NO_WAIT) != TX_SUCCESS)
-  {
-    return TX_POOL_ERROR;
-  }
+    {
+    	/* Initialize UDP Server */
+    	printf("UDP Server Init..\n");
+    	uint16_t app_udp_server_init( void *byte_pool, NX_IP *ip_instance, NX_PACKET_POOL *packet_pool);
+    	ret = app_udp_server_init((void *)byte_pool, &NetXDuoEthIpInstance, &NxAppPool);
+    	if (ret != TX_SUCCESS){
+    		printf("udp server Init failed\r\n");
+    		return NX_NOT_ENABLED;
+    	}
+    }
 
-  /* Create the Link thread */
-  ret = tx_thread_create( &AppLinkThread, "App Link Thread", App_Link_Thread_Entry,
-		  	  	  	  	  0, pointer, LINK_STACK,
-                          LINK_PRIORITY, LINK_PRIORITY,
-						  TX_NO_TIME_SLICE, TX_AUTO_START);
+    {
+    	/* Initialize mqtt client */
+    	uint16_t app_mqtt_init( void *byte_pool, NX_PACKET_POOL *packet_pool,
+    			NX_IP *ip_instance, NX_DNS *dns_client_ptr );
+    	uint16_t ret = app_mqtt_init( (void *)byte_pool, &NxAppPool,
+    			&NetXDuoEthIpInstance,
+				&DnsClient );
+    	if(ret != TX_SUCCESS){
+    		printf("MQTT Init failed\r\n");
+    		return NX_NOT_ENABLED;
+    	}
+    }
 
-  if (ret != TX_SUCCESS)
-  {
-    return NX_NOT_ENABLED;
-  }
+    /* END of Applications Initialization ******************************/
 
   /* USER CODE END MX_NetXDuo_Init */
 
@@ -687,260 +679,6 @@ static VOID App_Link_Thread_Entry(ULONG thread_input)
         tx_thread_sleep(NX_APP_CABLE_CONNECTION_CHECK_PERIOD);
     }
 }
-
-/**
-* @brief  Link thread entry
-* @param thread_input: ULONG thread parameter
-* @retval none
-*/
-//static VOID App_Link_Thread_Entry(ULONG thread_input)
-//{
-//  ULONG actual_status;
-//  UINT current_link_status;
-//  UINT status;
-//
-//  /* Initialize previous state based on actual startup state */
-//  status = nx_ip_interface_status_check(&NetXDuoEthIpInstance, 0, NX_IP_LINK_ENABLED, &actual_status, 10);
-//  is_link_up_prev = (status == NX_SUCCESS) ? 1 : 0;
-//
-//  for(;;)
-//  {
-//    /* 1. Check current physical link status */
-//    status = nx_ip_interface_status_check(&NetXDuoEthIpInstance, 0, NX_IP_LINK_ENABLED, &actual_status, 10);
-//
-//    /* Normalize status to 0 or 1 */
-//    current_link_status = (status == NX_SUCCESS) ? 1 : 0;
-//
-//    /* 2. Detect State Change */
-//    if (current_link_status != is_link_up_prev)
-//    {
-//        if (current_link_status == 1)
-//        {
-//            /* Transition: Down -> Up */
-//            Handle_Link_Up();
-//        }
-//        else
-//        {
-//            /* Transition: Up -> Down */
-//            Handle_Link_Down();
-//        }
-//
-//        /* Update history */
-//        is_link_up_prev = current_link_status;
-//    }
-//
-//    /* 3. Reduce polling frequency to save CPU */
-//    tx_thread_sleep(NX_APP_CABLE_CONNECTION_CHECK_PERIOD);
-//  }
-//}
-
-//static VOID App_Link_Thread_Entry(ULONG thread_input)
-//{
-//  ULONG events;
-//
-//  /* Initial Check (in case we booted with cable already in) */
-//  /* ... (same initial check logic as before) ... */
-//
-//  while(1)
-//  {
-//      /* Wait for EITHER Link Up OR Link Down event */
-//      tx_event_flags_get(&link_event_group,
-//                         EVENT_LINK_UP | EVENT_LINK_DOWN,
-//                         TX_OR_CLEAR,
-//                         &events,
-//                         TX_WAIT_FOREVER);
-//
-//      if (events & EVENT_LINK_UP)
-//      {
-//          printf("Callback said: Link is UP!\n");
-//          Handle_Link_Up(); // The helper function we wrote earlier
-//      }
-//
-//      if (events & EVENT_LINK_DOWN)
-//      {
-//          printf("Callback said: Link is DOWN!\n");
-//          Handle_Link_Down(); // The helper function we wrote earlier
-//      }
-//  }
-//}
-
-///**
-//* @brief  Link thread entry
-//* @param thread_input: ULONG thread parameter
-//* @retval none
-//*/
-//static VOID App_Link_Thread_Entry(ULONG thread_input)
-//{
-//  ULONG actual_status;
-//  UINT linkdown = 0, status;
-//
-//  while(1)
-//  {
-//    /* Send request to check if the Ethernet cable is connected. */
-//    status = nx_ip_interface_status_check(&NetXDuoEthIpInstance, 0, NX_IP_LINK_ENABLED,
-//                                      &actual_status, 10);
-//    printf("Checking network cable connection..\n");
-//    if(status == NX_SUCCESS)
-//    {
-//
-//      if(linkdown == 1)
-//      {
-//        linkdown = 0;
-//
-//        /* The network cable is connected. */
-//        printf("The network cable is connected.\n");
-//
-//        /* Send request to enable PHY Link. */
-//        nx_ip_driver_direct_command(&NetXDuoEthIpInstance, NX_LINK_ENABLE,
-//                                      &actual_status);
-//
-//        /* Send request to check if an address is resolved. */
-//        status = nx_ip_interface_status_check(&NetXDuoEthIpInstance, 0, NX_IP_ADDRESS_RESOLVED,
-//                                      &actual_status, 10);
-//        if(status == NX_SUCCESS)
-//        {
-//          /* Stop DHCP */
-//          nx_dhcp_stop(&DHCPClient);
-//
-//          /* Reinitialize DHCP */
-//          nx_dhcp_reinitialize(&DHCPClient);
-//
-//          /* Start DHCP */
-//          nx_dhcp_start(&DHCPClient);
-//
-//          /* Wait until an IP address is ready */
-//          if(tx_semaphore_get(&DHCPSemaphore, TX_WAIT_FOREVER) != TX_SUCCESS)
-//          {
-//            /* USER CODE BEGIN DHCPSemaphore get error */
-//        	  printf("tx_semaphore_get() failed: error 0x%08x", NX_NOT_SUCCESSFUL);
-//            Error_Handler();
-//            /* USER CODE END DHCPSemaphore get error */
-//          }
-//
-//          PRINT_IP_ADDRESS(IpAddress);
-//        }
-//        else
-//        {
-//          /* Set the DHCP Client's remaining lease time to 0 seconds to trigger an immediate renewal request for a DHCP address. */
-//          nx_dhcp_client_update_time_remaining(&DHCPClient, 0);
-//          printf("DHCP lease renewal triggered.\n");
-//        }
-//      }
-//    }
-//    else
-//    {
-//      if(0 == linkdown)
-//      {
-//        linkdown = 1;
-//        /* The network cable is not connected. */
-//        printf("The network cable is not connected.\n");
-//        nx_ip_driver_direct_command(&NetXDuoEthIpInstance, NX_LINK_DISABLE,
-//                                      &actual_status);
-//      }
-//    }
-//
-//    tx_thread_sleep(NX_APP_CABLE_CONNECTION_CHECK_PERIOD);
-//  }
-//}
-
-///**
-//  * @brief  message generation Function.
-//  * @param  RandomNbr
-//  * @retval none
-//  */
-//static UINT message_generate(void)
-//{
-//  uint32_t RandomNbr = 0;
-//
-//  HAL_RNG_Init(&hrng);
-//
-//  /* Generate a random number */
-//  if(HAL_RNG_GenerateRandomNumber(&hrng, &RandomNbr) != HAL_OK)
-//  {
-//	  printf("HAL_RNG_GenerateRandomNumber() failed");
-//    Error_Handler();
-//  }
-//
-//  return RandomNbr %= 50;
-//}
-//
-///* Function (set by user) to call when TLS needs the current time. */
-//ULONG nx_secure_tls_session_time_function(void)
-//{
-//  return (current_time);
-//}
-//
-///* Callback to setup TLS parameters for secure MQTT connection. */
-//UINT tls_setup_callback(NXD_MQTT_CLIENT *client_pt,
-//                        NX_SECURE_TLS_SESSION *TLS_session_ptr,
-//                        NX_SECURE_X509_CERT *certificate_ptr,
-//                        NX_SECURE_X509_CERT *trusted_certificate_ptr)
-//{
-//  UINT ret = NX_SUCCESS;
-//  NX_PARAMETER_NOT_USED(client_pt);
-//
-//  /* Initialize TLS module */
-//  nx_secure_tls_initialize();
-//
-//  /* Create a TLS session */
-//  ret = nx_secure_tls_session_create(TLS_session_ptr, &nx_crypto_tls_ciphers,
-//                                     crypto_metadata_client, sizeof(crypto_metadata_client));
-//  if (ret != NX_SUCCESS)
-//  {
-//	  printf("nx_secure_tls_session_create() failed: error 0x%08x", ret);
-//    Error_Handler();
-//  }
-//
-//  /* Need to allocate space for the certificate coming in from the broker. */
-//  memset((certificate_ptr), 0, sizeof(NX_SECURE_X509_CERT));
-//
-//    ret = nx_secure_tls_session_time_function_set(TLS_session_ptr, nx_secure_tls_session_time_function);
-//
-//  if (ret != NX_SUCCESS)
-//  {
-//	  printf("nx_secure_tls_session_time_function_set() failed: error 0x%08x", ret);
-//    Error_Handler();
-//  }
-//
-//  /* Allocate space for packet reassembly. */
-//  ret = nx_secure_tls_session_packet_buffer_set(TLS_session_ptr, tls_packet_buffer,
-//                                                sizeof(tls_packet_buffer));
-//  if (ret != NX_SUCCESS)
-//  {
-//	  printf("nx_secure_tls_session_packet_buffer_set() failed: error 0x%08x", ret);
-//    Error_Handler();
-//  }
-//
-//  /* Allocate space for the certificate coming in from the remote host */
-//  ret = nx_secure_tls_remote_certificate_allocate(TLS_session_ptr, certificate_ptr,
-//                                                  tls_packet_buffer, sizeof(tls_packet_buffer));
-//  if (ret != NX_SUCCESS)
-//  {
-//	  printf("nx_secure_tls_remote_certificate_allocate() failed: error 0x%08x", ret);
-//    Error_Handler();
-//  }
-//
-//  /* Initialize Certificate to verify incoming server certificates. */
-//  ret = nx_secure_x509_certificate_initialize(trusted_certificate_ptr, (UCHAR*)mosquitto_org_der,
-//                                              mosquitto_org_der_len, NX_NULL, 0, NULL, 0,
-//                                              NX_SECURE_X509_KEY_TYPE_NONE);
-//  if (ret != NX_SUCCESS)
-//  {
-//    printf("Certificate issue..\nPlease make sure that your X509_certificate is valid. \n");
-//    Error_Handler();
-//  }
-//
-//  /* Add a CA Certificate to our trusted store */
-//  ret = nx_secure_tls_trusted_certificate_add(TLS_session_ptr, trusted_certificate_ptr);
-//  if (ret != TX_SUCCESS)
-//  {
-//	  printf("nx_secure_tls_trusted_certificate_add() failed: error 0x%08x", ret);
-//    Error_Handler();
-//  }
-//
-//  return ret;
-//}
-
 
 /*==============================================================================
   SNTP Client thread entry
