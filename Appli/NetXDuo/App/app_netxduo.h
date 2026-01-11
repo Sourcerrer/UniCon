@@ -34,8 +34,8 @@ extern "C" {
 /* USER CODE BEGIN Includes */
 #include "main.h"
 #include "nxd_dhcp_client.h"
-#include "nxd_mqtt_client.h"
-#include "nxd_sntp_client.h"
+//#include "nxd_mqtt_client.h"
+//#include "nxd_sntp_client.h"
 #include "nxd_dns.h"
 /* USER CODE END Includes */
 
@@ -49,7 +49,7 @@ extern "C" {
 
 /* All protocol thread priorities */
 
-#define SNTP_PRIORITY               14
+
 #define TCP_THREAD_PRIORITY         15
 #define LINK_PRIORITY               12
 
@@ -61,20 +61,7 @@ extern "C" {
 
 #define DEMO_MESSAGE_EVENT          1
 #define DEMO_ALL_EVENTS             3
-/* SNTP Client configuration */
-#define SNTP_CLIENT_THREAD_MEMORY    6 * DEFAULT_MEMORY_SIZE
-#define SNTP_SERVER_NAME             "time1.google.com"
-#define SNTP_SERVER_NAME_1			"0.in.pool.ntp.org"
 
-#define SNTP_UPDATE_EVENT           (uint32_t)( 1UL << 0UL )
-#define SNTP_RTC_UPDATE_EVENT		(uint32_t)( 1UL << 1UL )
-#define SNTP_NETWORK_CABLE_CONNECTED_EVENT		(uint32_t)( 1UL << 2UL )
-/* Define how often the demo checks for SNTP updates. */
-#define PERIODIC_CHECK_INTERVAL      (60 * NX_IP_PERIODIC_RATE)
-/* Define how often we check on SNTP server status. */
-#define CHECK_SNTP_UPDATES_TIMEOUT   (180 * NX_IP_PERIODIC_RATE)
-#define EPOCH_TIME_DIFF              2208988800     /* is equivalent to 70 years in sec
-                                                     calculated with www.epochconverter.com/date-difference */
 #define NULL_ADDRESS                0
 #define USER_DNS_ADDRESS            IP_ADDRESS(1, 1, 1, 1)   /* User should configure it with his DNS address */
 #define DEFAULT_TIMEOUT             5 * NX_IP_PERIODIC_RATE

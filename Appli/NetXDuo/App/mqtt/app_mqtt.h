@@ -50,10 +50,14 @@ typedef enum {
 
 #ifdef __cplusplus
 extern "C" {
+#endif
 uint16_t app_mqtt_init( void *byte_pool, NX_PACKET_POOL *packet_pool,
 						NX_IP *ip_instance, NX_DNS *dns_client_ptr );
 TX_THREAD* get_mqtt_thread_instance(void);
+
+#ifdef __cplusplus
 }
+#endif
 
 #endif
 

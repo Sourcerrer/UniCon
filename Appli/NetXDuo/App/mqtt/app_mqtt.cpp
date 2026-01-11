@@ -16,6 +16,7 @@
 #include "app_threadx.h"
 #include "log_util.h"
 #include "netx_util.h"
+#include "nxd_mqtt_client.h"
 
 TX_THREAD AppMQTTClientThread;
 NXD_MQTT_CLIENT MqttClient;
@@ -35,11 +36,11 @@ static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input);
 volatile bool is_mqtt_client_connected = false; /* this variable is set & reset in */
 
 struct mqtt_client_info_t{
-	ULONG       broker_ip_address;
+	ULONG       	broker_ip_address;
 	NX_PACKET_POOL *packet_pool;
-	NX_IP *ip_instance;
-	NX_DNS *dns_client_ptr;
-	TX_BYTE_POOL *byte_pool;
+	NX_IP 			*ip_instance;
+	NX_DNS 			*dns_client_ptr;
+	TX_BYTE_POOL 	*byte_pool;
 };
 
 TX_THREAD* get_mqtt_thread_instance(void){
