@@ -367,6 +367,54 @@ static void Sntp_Start_And_Sync(NX_SNTP_CLIENT *sntp_ptr, NX_DNS *dns_ptr, ULONG
     }
 }
 
+/* Defines for Backup Registers */
+#define BKP_REG_MAGIC       RTC_BKP_DR1
+#define BKP_REG_OFFSET      RTC_BKP_DR2
+#define BKP_MAGIC_VALUE     0xA5A5A5A5  // Signature to verify data validity
+
+/* External RTC Handle from main.c */
+extern RTC_HandleTypeDef hrtc;
+
+/* Function: Save_Offset_To_Backup
+ * Description: Writes the offset to RTC Backup registers.
+ */
+void Save_Offset_To_Backup(LONG offset)
+{
+    /* 1. Unlock Backup Domain (Usually handled by HAL_RTC_Init, but good practice) */
+    HAL_PWR_EnableBkUpAccess();
+
+    /* 2. Write the Offset */
+    /* Note: Backup registers are 32-bit, so they fit a LONG perfectly */
+    HAL_RTCEx_BKUPWrite(&hrtc, BKP_REG_OFFSET, (uint32_t)offset);
+
+    /* 3. Write the Magic Number (Signature) */
+    HAL_RTCEx_BKUPWrite(&hrtc, BKP_REG_MAGIC, BKP_MAGIC_VALUE);
+
+    std::cout << LOG_LOC << "[Persist] Offset " << offset << " saved to Backup Regs." << std::endl;
+}
+
+/* Function: Load_Offset_From_Backup
+ * Description: Tries to read offset. Returns TRUE if valid data found.
+ */
+bool Load_Offset_From_Backup(LONG *offset)
+{
+    /* 1. Check Magic Number */
+    uint32_t magic = HAL_RTCEx_BKUPRead(&hrtc, BKP_REG_MAGIC);
+
+    if (magic == BKP_MAGIC_VALUE)
+    {
+        /* 2. Valid! Read the Offset */
+        /* Cast back to signed LONG (important for negative zones like NY) */
+        *offset = (LONG)HAL_RTCEx_BKUPRead(&hrtc, BKP_REG_OFFSET);
+
+        std::cout << LOG_LOC << "[Persist] Found saved offset: " << *offset << std::endl;
+        return true;
+    }
+
+    std::cout << LOG_LOC << "[Persist] No saved offset found (First run?)" << std::endl;
+    return false;
+}
+
 /* Function: Sntp_Auto_Zone_And_Process
  * Description:
  * 1. Attempts to get the current Timezone Offset via IP Geolocation (Internet).
@@ -378,36 +426,44 @@ void Sntp_Auto_Zone_And_Process(NX_SNTP_CLIENT *sntp_ptr,
                                 NX_PACKET_POOL *pool_ptr,
                                 NX_DNS *dns_ptr)
 {
-    /* Configuration: Default to IST (Indian Standard Time) +5:30 */
-    /* 19800 seconds = 5 * 3600 + 30 * 60 */
-    const LONG DEFAULT_OFFSET_IST = 19800;
+    /* Hardcoded Fallback (Factory Default) */
+    const LONG FACTORY_DEFAULT_OFFSET = 19800; // Pune/India
 
     LONG final_offset = 0;
     UINT geo_status;
 
-    std::cout << LOG_LOC << "--- Determining Local Timezone ---" << std::endl;
+    std::cout << LOG_LOC << "--- Determining Timezone ---" << std::endl;
 
-    /* 1. Attempt Dynamic Lookup */
+    /* 1. Try Internet Lookup */
     geo_status = Get_Timezone_Offset(ip_ptr, pool_ptr, dns_ptr, &final_offset);
 
-    /* 2. Robust Handling Logic */
     if (geo_status == NX_SUCCESS)
     {
-        /* Case A: Success (Internet worked) */
-        /* Note: final_offset can be 0 (e.g., UK winter), which is valid */
-        std::cout << LOG_LOC << "[Geo] Location Found via IP. Offset: "
-                  << final_offset << " seconds" << std::endl;
+        /* CASE A: Internet Success */
+        std::cout << LOG_LOC << "[Geo] Internet Lookup Success. Offset: " << final_offset << std::endl;
+
+        /* Save to Backup for next time */
+        Save_Offset_To_Backup(final_offset);
     }
     else
     {
-        /* Case B: Failure (DNS/Socket Error) - Use Fallback */
-        std::cout << LOG_LOC << "[Geo] Lookup Failed (Error: 0x" << std::hex << geo_status
-                  << "). Using Default Fallback (IST)." << std::dec << std::endl;
+        /* CASE B: Internet Failed */
+        std::cout << LOG_LOC << "[Geo] Internet Failed. Checking Backup Memory..." << std::endl;
 
-        final_offset = DEFAULT_OFFSET_IST;
+        /* 2. Try Loading from Backup Registers */
+        if (Load_Offset_From_Backup(&final_offset))
+        {
+             std::cout << LOG_LOC << "[Geo] Using Saved Offset from Backup." << std::endl;
+        }
+        else
+        {
+             /* 3. Total Failure -> Use Factory Default */
+             std::cout << LOG_LOC << "[Geo] No Backup found. Using Factory Default (IST)." << std::endl;
+             final_offset = FACTORY_DEFAULT_OFFSET;
+        }
     }
 
-    /* 3. Apply the decided offset to the SNTP time */
+    /* 4. Apply Time */
     Sntp_Process_Time(sntp_ptr, final_offset);
 }
 
@@ -473,42 +529,63 @@ static void Sntp_Process_Time(NX_SNTP_CLIENT *sntp_ptr, ULONG timezone_offset_se
 /*==============================================================================
   GeoIP Timezone Offset Fetcher
   ==============================================================================*/
-
 #include "nx_api.h"
 #include <iostream>
 #include <string_view>
-#include <cstdlib> // for std::strtol
-#include <cstring> // for memcpy, strstr
+#include <vector>
+#include <array>
+#include <cstdlib>
+#include <cstring>
 
-/* --- Configuration Constants --- */
+/* --- Configuration --- */
 #define HTTP_WINDOW_SIZE    2048
 #define HTTP_BUFFER_SIZE    2048
-#define IP_API_HOST         "ip-api.com"
 
-/* * Helper: Parse_Offset_Cpp
- * Uses C++ std::string_view to find the "offset" key safely.
- * Returns the offset as a LONG.
+/* Structure to define an API Provider */
+struct GeoProvider {
+    const char* host;       // e.g., "ip-api.com"
+    const char* path;       // e.g., "/json/?fields=offset"
+    const char* search_key; // JSON key to find, e.g., "offset"
+};
+
+/* List of Free Geolocation APIs (Ordered by priority) */
+static const std::array<GeoProvider, 3> GEO_SERVERS = {{
+    /* 1. ip-api.com: Best free tier, returns seconds */
+    { "ip-api.com",       "/json/?fields=offset", "offset" },
+
+    /* 2. ipwho.is: Very reliable, similar output */
+    { "ipwho.is",         "/",                    "offset" },
+
+    /* 3. WorldTimeAPI: Solid backup (Note: Check if 'raw_offset' meets your needs) */
+    { "worldtimeapi.org", "/api/ip",              "raw_offset" }
+}};
+
+
+/* * Helper: Parse_Json_Int
+ * Generic helper to find a specific key ("offset", "raw_offset") and parse the value.
  */
-static LONG Parse_Offset_Cpp(std::string_view json)
+static LONG Parse_Json_Int(std::string_view json, const char* target_key)
 {
-    /* 1. Find key "offset" */
-    auto key_pos = json.find("\"offset\"");
+    /* 1. Construct search string with quotes, e.g., "offset" */
+    char key_pattern[32];
+    snprintf(key_pattern, sizeof(key_pattern), "\"%s\"", target_key);
+
+    /* 2. Find Key */
+    auto key_pos = json.find(key_pattern);
     if (key_pos == std::string_view::npos) return 0;
 
-    /* 2. Find separator ':' */
+    /* 3. Find Separator ':' */
     auto val_pos = json.find(':', key_pos);
     if (val_pos == std::string_view::npos) return 0;
 
-    /* 3. Convert number
-     * json.data() + val_pos + 1 points to the start of the value (e.g., " 19800")
-     * std::strtol automatically skips leading whitespace and handles negative signs.
-     */
+    /* 4. Parse Number */
+    /* data() + val_pos + 1 points to value start. strtol handles signs/spaces. */
     return std::strtol(json.data() + val_pos + 1, nullptr, 10);
 }
 
+
 /* * Function: Get_Timezone_Offset_Robust
- * Description: Connects to ip-api.com to get the current timezone offset (seconds).
- * Retries on failure and handles packet fragmentation.
+ * Description: Cycles through multiple API providers to find the timezone offset.
  */
 UINT Get_Timezone_Offset(NX_IP *ip_ptr, NX_PACKET_POOL *pool_ptr, NX_DNS *dns_ptr, LONG *result_offset)
 {
@@ -519,142 +596,122 @@ UINT Get_Timezone_Offset(NX_IP *ip_ptr, NX_PACKET_POOL *pool_ptr, NX_DNS *dns_pt
     NX_PACKET *response_packet;
 
     UCHAR buffer[HTTP_BUFFER_SIZE];
-    const int MAX_RETRIES = 3;
-    bool success = false;
+    bool global_success = false;
 
-    *result_offset = 0; // Default to 0
+    *result_offset = 0;
 
-    /* ------------------------------------------------------------------
-     * 1. Resolve DNS
-     * ------------------------------------------------------------------ */
-    std::cout << LOG_LOC << "[Geo] Resolving DNS for: " << IP_API_HOST << "..." << std::endl;
+    std::cout << LOG_LOC << "--- Starting Geolocation Lookup (Multi-API) ---" << std::endl;
 
-    status = nx_dns_host_by_name_get(dns_ptr, (UCHAR*)IP_API_HOST, &server_ip.nxd_ip_address.v4, 3000);
-    server_ip.nxd_ip_version = NX_IP_VERSION_V4;
-
-    if (status != NX_SUCCESS) {
-        std::cout << LOG_LOC << "[Geo] DNS Failed (0x" << std::hex << status << ")" << std::dec << std::endl;
-        return status;
-    }
-
-    /* ------------------------------------------------------------------
-     * 2. Create Socket
-     * ------------------------------------------------------------------ */
-    status = nx_tcp_socket_create(ip_ptr, &socket, (CHAR*)"GeoSocket",
-                                  NX_IP_NORMAL, NX_FRAGMENT_OKAY, 0x80,
-                                  HTTP_WINDOW_SIZE, NX_NULL, NX_NULL);
-
-    if (status != NX_SUCCESS) return status;
-
-    status = nx_tcp_client_socket_bind(&socket, NX_ANY_PORT, NX_WAIT_FOREVER);
-    if (status != NX_SUCCESS) { nx_tcp_socket_delete(&socket); return status; }
-
-    /* ------------------------------------------------------------------
-     * 3. Connection Retry Loop
-     * ------------------------------------------------------------------ */
-    for (int attempt = 1; attempt <= MAX_RETRIES; attempt++)
+    /* --- OUTER LOOP: Iterate through Providers --- */
+    for (const auto& provider : GEO_SERVERS)
     {
-        std::cout << LOG_LOC << "[Geo] Attempt " << attempt << ": Connecting..." << std::endl;
+        std::cout << LOG_LOC << "[Geo] Trying Provider: " << provider.host << "..." << std::endl;
 
-        /* A. Connect */
-        status = nxd_tcp_client_socket_connect(&socket, &server_ip, 80, 3000);
+        /* 1. Resolve DNS for current provider */
+        status = nx_dns_host_by_name_get(dns_ptr, (UCHAR*)provider.host, &server_ip.nxd_ip_address.v4, 2000);
+        server_ip.nxd_ip_version = NX_IP_VERSION_V4;
 
-        if (status != NX_SUCCESS)
-        {
-            std::cout << LOG_LOC << "[Geo] Connect Failed (0x" << std::hex << status << ")" << std::dec << std::endl;
-            nx_tcp_socket_disconnect(&socket, NX_NO_WAIT);
-            tx_thread_sleep(100);
-            continue;
-        }
-
-        /* B. Allocate Packet */
-        status = nx_packet_allocate(pool_ptr, &request_packet, NX_TCP_PACKET, NX_WAIT_FOREVER);
         if (status != NX_SUCCESS) {
-            nx_tcp_socket_disconnect(&socket, NX_NO_WAIT);
-            break; // Fatal memory error
+            std::cout << LOG_LOC << "[Geo] DNS Failed for " << provider.host << ". Trying next..." << std::endl;
+            continue; // Try next provider
         }
 
-        /* C. Prepare HTTP/1.0 Request (No chunking, simpler) */
-        const char *request =
-            "GET /json/?fields=offset HTTP/1.0\r\n"
-            "Host: ip-api.com\r\n"
-            "User-Agent: STM32_Client/1.0\r\n"
-            "Accept: */*\r\n"
-            "Connection: close\r\n"
-            "\r\n";
+        /* 2. Create Socket */
+        status = nx_tcp_socket_create(ip_ptr, &socket, (CHAR*)"GeoSocket",
+                                      NX_IP_NORMAL, NX_FRAGMENT_OKAY, 0x80,
+                                      HTTP_WINDOW_SIZE, NX_NULL, NX_NULL);
+        if (status != NX_SUCCESS) return status; // Fatal resource error
 
-        nx_packet_data_append(request_packet, (VOID*)request, strlen(request), pool_ptr, NX_WAIT_FOREVER);
+        status = nx_tcp_client_socket_bind(&socket, NX_ANY_PORT, NX_WAIT_FOREVER);
+        if (status != NX_SUCCESS) { nx_tcp_socket_delete(&socket); return status; }
 
-        /* D. Send */
-        status = nx_tcp_socket_send(&socket, request_packet, 200);
-        if (status != NX_SUCCESS) {
-            /* NetX usually frees packet on failure, but check your version. */
-            std::cout << LOG_LOC << "[Geo] Send Failed (0x" << std::hex << status << ")" << std::dec << std::endl;
-            nx_tcp_socket_disconnect(&socket, NX_NO_WAIT);
-            tx_thread_sleep(100);
-            continue;
-        }
-
-        /* E. Receive */
-        std::cout << LOG_LOC << "[Geo] Request Sent. Waiting for Reply..." << std::endl;
-        status = nx_tcp_socket_receive(&socket, &response_packet, 5000);
-
-        if (status == NX_SUCCESS)
+        /* 3. Retry Loop for Current Provider */
+        for (int attempt = 1; attempt <= 2; attempt++) // Try each provider twice
         {
-            /* F. Extract Data (Handling Chained Packets) */
-            ULONG total_copied = 0;
-            NX_PACKET *current_packet = response_packet;
-
-            while (current_packet != NX_NULL && total_copied < (HTTP_BUFFER_SIZE - 1))
-            {
-                ULONG bytes = current_packet->nx_packet_length;
-                if ((total_copied + bytes) > (HTTP_BUFFER_SIZE - 1)) {
-                    bytes = (HTTP_BUFFER_SIZE - 1) - total_copied;
-                }
-                memcpy(&buffer[total_copied], current_packet->nx_packet_prepend_ptr, bytes);
-                total_copied += bytes;
-                current_packet = current_packet->nx_packet_next;
-            }
-            buffer[total_copied] = '\0'; // Null Terminate
-            nx_packet_release(response_packet);
-
-            /* G. Parse Body */
-            char *body = strstr((char*)buffer, "\r\n\r\n");
-            if (body)
-            {
-                LONG temp_offset = Parse_Offset_Cpp(body);
-
-                /* Validation: If offset is 0, ensure it was actually "0" in JSON or assume valid GMT */
-                if (temp_offset != 0 || strstr(body, "\"offset\":0") || strstr(body, "\"offset\": 0"))
-                {
-                    *result_offset = temp_offset;
-                    success = true;
-                    std::cout << LOG_LOC << "[Geo] Success! Offset: " << *result_offset << std::endl;
-                }
-                else
-                {
-                     std::cout << LOG_LOC << "[Geo] Parse Warning: Offset 0 or key not found." << std::endl;
-                }
+            /* CONNECT */
+            status = nxd_tcp_client_socket_connect(&socket, &server_ip, 80, 3000);
+            if (status != NX_SUCCESS) {
+                nx_tcp_socket_disconnect(&socket, NX_NO_WAIT);
+                tx_thread_sleep(50); continue;
             }
 
-            /* Clean Disconnect */
-            nx_tcp_socket_disconnect(&socket, 200);
-            break; // Exit Loop
+            /* ALLOCATE */
+            status = nx_packet_allocate(pool_ptr, &request_packet, NX_TCP_PACKET, NX_WAIT_FOREVER);
+            if (status != NX_SUCCESS) {
+                nx_tcp_socket_disconnect(&socket, NX_NO_WAIT); break;
+            }
+
+            /* BUILD REQUEST (Using provider-specific path) */
+            char request_header[256];
+            snprintf(request_header, sizeof(request_header),
+                    "GET %s HTTP/1.0\r\n"
+                    "Host: %s\r\n"
+                    "User-Agent: STM32_Client/1.0\r\n"
+                    "Accept: */*\r\n"
+                    "Connection: close\r\n\r\n",
+                    provider.path, provider.host);
+
+            nx_packet_data_append(request_packet, (VOID*)request_header, strlen(request_header), pool_ptr, NX_WAIT_FOREVER);
+
+            /* SEND */
+            status = nx_tcp_socket_send(&socket, request_packet, 200);
+            if (status != NX_SUCCESS) {
+                nx_tcp_socket_disconnect(&socket, NX_NO_WAIT); tx_thread_sleep(50); continue;
+            }
+
+            /* RECEIVE */
+            status = nx_tcp_socket_receive(&socket, &response_packet, 5000);
+            if (status == NX_SUCCESS)
+            {
+                /* DATA ASSEMBLY */
+                ULONG total_copied = 0;
+                NX_PACKET *curr = response_packet;
+                while (curr && total_copied < (HTTP_BUFFER_SIZE - 1)) {
+                    ULONG bytes = curr->nx_packet_length;
+                    if (total_copied + bytes > HTTP_BUFFER_SIZE - 1) bytes = (HTTP_BUFFER_SIZE - 1) - total_copied;
+                    memcpy(&buffer[total_copied], curr->nx_packet_prepend_ptr, bytes);
+                    total_copied += bytes;
+                    curr = curr->nx_packet_next;
+                }
+                buffer[total_copied] = '\0';
+                nx_packet_release(response_packet);
+
+                /* PARSE (Using provider-specific key) */
+                char *body = strstr((char*)buffer, "\r\n\r\n");
+                if (body) {
+                    LONG temp = Parse_Json_Int(body, provider.search_key);
+
+                    /* Validation: Non-zero or explicit 0 found */
+                    char zero_pattern[32];
+                    snprintf(zero_pattern, sizeof(zero_pattern), "\"%s\":0", provider.search_key);
+
+                    if (temp != 0 || strstr(body, zero_pattern)) {
+                        *result_offset = temp;
+                        global_success = true;
+                        std::cout << LOG_LOC << "[Geo] Success via " << provider.host << "! Offset: " << temp << std::endl;
+                    }
+                }
+
+                nx_tcp_socket_disconnect(&socket, 200);
+                break; // Break Retry Loop (Success)
+            }
+            else {
+                nx_tcp_socket_disconnect(&socket, NX_NO_WAIT);
+                tx_thread_sleep(50);
+            }
         }
-        else
-        {
-            std::cout << LOG_LOC << "[Geo] Receive Failed (0x" << std::hex << status << ")" << std::dec << std::endl;
-            nx_tcp_socket_disconnect(&socket, NX_NO_WAIT);
-            tx_thread_sleep(100);
-        }
+
+        /* Cleanup Socket before next provider */
+        nx_tcp_client_socket_unbind(&socket);
+        nx_tcp_socket_delete(&socket);
+
+        if (global_success) break; // Break Provider Loop (Done!)
     }
 
-    /* 4. Cleanup */
-    nx_tcp_client_socket_unbind(&socket);
-    nx_tcp_socket_delete(&socket);
-
-    return (success ? NX_SUCCESS : NX_NOT_CONNECTED);
+    return (global_success ? NX_SUCCESS : NX_NOT_CONNECTED);
 }
+
+
 
 /**
  * @brief  Get the SNTP client thread instance.
