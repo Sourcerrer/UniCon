@@ -10,7 +10,12 @@
 #include <array>
 #include <string_view>
 #include <time.h>
+#include <string>
+#include <cstring>
+#include <cstdio>
+#include <cstdlib> // For atol
 
+#include "nx_api.h"
 #include "app_sntp.h"
 #include "nxd_sntp_client.h"
 #include "stm32h7rsxx_hal.h"
@@ -19,6 +24,7 @@
 
 TX_THREAD AppSNTPThread;
 NX_SNTP_CLIENT  SntpClient;
+TX_EVENT_FLAGS_GROUP     SntpFlags;
 /* SNTP client variables */
 CHAR                     buffer[64];  // buffer to store the date and time string
 struct tm timeInfos;
@@ -36,7 +42,15 @@ static UINT sntp_leap_second_handler(NX_SNTP_CLIENT *client_ptr, UINT indicator)
 //static VOID App_MQTT_Client_Thread_Entry(ULONG thread_input);
 static VOID App_SNTP_Thread_Entry(ULONG thread_input);
 static VOID time_update_callback(NX_SNTP_TIME_MESSAGE *time_update_ptr, NX_SNTP_TIME *local_time);
-static UINT Sntp_Resolve_And_Start(NX_SNTP_CLIENT *sntp_ptr, NX_DNS *dns_ptr, ULONG wait_option);
+//static UINT Sntp_Resolve_And_Start(NX_SNTP_CLIENT *sntp_ptr, NX_DNS *dns_ptr, ULONG wait_option);
+static void Sntp_Start_And_Sync(NX_SNTP_CLIENT *sntp_ptr, NX_DNS *dns_ptr, ULONG wait_option);
+static void Sntp_Process_Time(NX_SNTP_CLIENT *sntp_ptr, ULONG timezone_offset_sec);
+UINT Get_Timezone_Offset(NX_IP *ip_ptr, NX_PACKET_POOL *pool_ptr, NX_DNS *dns_ptr, LONG *result_offset);
+void Sntp_Auto_Zone_And_Process(NX_SNTP_CLIENT *sntp_ptr,
+                                NX_IP *ip_ptr,
+                                NX_PACKET_POOL *pool_ptr,
+                                NX_DNS *dns_ptr);
+
 //static ULONG nx_secure_tls_session_time_function(void);
 /***********************************************************************/
 struct sntp_client_info_t{
@@ -94,6 +108,13 @@ UINT app_sntp_init( void *byte_pool, NX_PACKET_POOL *packet_pool,
 
 	std::cout << LOG_LOC << "MQTT client thread created with status: " << ret << std::endl;
 	if (ret != TX_SUCCESS) { return TX_THREAD_ERROR; }
+
+	/* Create the event flags. */
+	ret = tx_event_flags_create(&SntpFlags, const_cast<CHAR *>("SNTP event flags") );
+
+	/* Check for errors */
+	if (ret != NX_SUCCESS) { return NX_NOT_ENABLED; }
+
 	return NX_SUCCESS;
 }
 
@@ -110,16 +131,9 @@ static void App_SNTP_Thread_Entry(ULONG info)
 {
   UINT ret;
   RtcHandle.Instance = RTC;
-  ULONG  seconds, fraction;
-  ULONG  events = 0;
-  UINT   server_status;
-  NXD_ADDRESS sntp_server_ip;
   NX_PARAMETER_NOT_USED(info);
-  const static ULONG WaitTime = 100;
   ULONG wait_for_dns{ 5 * NX_IP_PERIODIC_RATE };  // wait for 5 seconds
-//  const static ULONG WaitTime_long = 2000;
-  sntp_server_ip.nxd_ip_version = 4;
-//  UINT old_threshold;
+//  sntp_server_ip.nxd_ip_version = 4;
   static const ULONG RESYNC_INTERVAL = 30 * 60 * TX_TIMER_TICKS_PER_SECOND;
 
   /******************************************************/
@@ -127,190 +141,60 @@ static void App_SNTP_Thread_Entry(ULONG info)
   sntp_client_info_t *sntp_client_info = reinterpret_cast<sntp_client_info_t *>(info);
   /************************************/
 
-	std::cout << "Starting sntp client.." << std::endl;
+	/* ----------------------------------------------------------------
+	 * 1. Create SNTP Client (DO NOT LOOP THIS)
+	 * ----------------------------------------------------------------
+	 * If creation fails (e.g., No Memory), retrying usually won't help.
+	 * We check once and handle the fatal error.
+	 */
+	ret = nx_sntp_client_create(&SntpClient,
+			sntp_client_info->ip_instance,
+			iface_index,
+			sntp_client_info->packet_pool,
+			sntp_leap_second_handler,			/* leap_second_handler() (Optional) A
+			 * function pointer called if the NTP
+			 * server warns of an upcoming leap second.
+			 * Pass NX_NULL if you don't care. */
+			kiss_of_death_handler,			/* (Optional) A function pointer called if the
+			 * Server rejects you (sends a "Kiss of Death" packet).
+			 * Pass NX_NULL if you don't care. */
+			sntp_random_number_generator);	/* (Mandatory) A function pointer that returns a random ULONG.
+			 * NetX uses this to generate "Jitter" so all devices don't hit
+			 * the server at the exact same millisecond. */
 
-  /* Create the SNTP Client */
-  do{
-	  ret =  nx_sntp_client_create( &SntpClient,
-			  	  	  	  	  	  	sntp_client_info->ip_instance,
-									iface_index,
-									sntp_client_info->packet_pool,
-									sntp_leap_second_handler,   /* leap_second_handler() (Optional) A
-																 * function pointer called if the NTP
-																 * server warns of an upcoming leap second.
-															     * Pass NX_NULL if you don't care. */
-									kiss_of_death_handler,      /* (Optional) A function pointer called if the
-															     * Server rejects you (sends a "Kiss of Death" packet).
-															     * Pass NX_NULL if you don't care. */
-									sntp_random_number_generator /* (Mandatory) A function pointer that returns a random ULONG.
-									   	   	   	   	   	   	      * NetX uses this to generate "Jitter" so all devices don't hit
-									   	   	   	   	   	    	  * the server at the exact same millisecond. */
-									 );
-	  tx_thread_sleep(WaitTime);
-  }while(ret != NX_SUCCESS);
+	if (ret != NX_SUCCESS){
+		std::cout << LOG_LOC << "FATAL: SNTP Create Failed (0x" << std::hex << ret << ")" << std::endl;
+		tx_thread_suspend(tx_thread_identify());
+	}
   std::cout << LOG_LOC << "SNTP client created with status: " << ret << std::endl;
-
-  /* 1. Get Current Server Name from your Object */
-  std::string_view current_host = sntp_servers.get_current();
 
   /* Setup time update callback function. */
   nx_sntp_client_set_time_update_notify(&SntpClient, time_update_callback);
-
-   std::cout << LOG_LOC << "Resolving: " << current_host << "..." << std::endl;
-   Sntp_Resolve_And_Start(&SntpClient,
-		   sntp_client_info->dns_client_ptr,
-		   wait_for_dns);
-
-  /* Run whichever service the client is configured for. */
-   do{
-	   ret = nx_sntp_client_run_unicast(&SntpClient);
-	   tx_thread_sleep(WaitTime);
-   }while(ret != NX_SUCCESS);
-
-//   tx_thread_preemption_change(&AppSNTPThread, old_threshold, &old_threshold );
-  /* Wait for a server update event. */
-   do{
-	   tx_event_flags_get(&SntpFlags, SNTP_UPDATE_EVENT, TX_OR_CLEAR, &events, PERIODIC_CHECK_INTERVAL);
-	   if( (  (events & SNTP_UPDATE_EVENT) != SNTP_UPDATE_EVENT  )  ){
-		   /* We can stop the SNTP service if for example we think the SNTP server has stopped sending updates */
-		   do{
-		 	  ret = nx_sntp_client_stop(&SntpClient);
-		 	  tx_thread_sleep(WaitTime);
-		   }while(ret != NX_SUCCESS);
-		   printf("SNTP client stopped\r\n");
-		   do{
-		 	  ret = nx_dns_host_by_name_get(&DnsClient, (UCHAR *)SNTP_SERVER_NAME,
-		 	                                  &sntp_server_ip.nxd_ip_address.v4, NX_APP_DEFAULT_TIMEOUT);
-		 	  tx_thread_sleep(WaitTime);
-		   }while(ret != NX_SUCCESS);
-
-		   nx_sntp_client_set_time_update_notify(&SntpClient, time_update_callback);
-		   ret = nx_sntp_client_initialize_unicast(&SntpClient, sntp_server_ip.nxd_ip_address.v4);
-		   tx_thread_sleep(WaitTime);
-		   ret = nx_sntp_client_run_unicast(&SntpClient);
-		   tx_thread_sleep(WaitTime);
-		   PRINT_CNX_SUCC_1();
-	   }
-   }while( (  (events & SNTP_UPDATE_EVENT) != SNTP_UPDATE_EVENT  ) );
-
-   printf("SNTP Event Update\r\n");
-   /* Check for valid SNTP server status. */
-   do{
-	   ret = nx_sntp_client_receiving_updates(&SntpClient, &server_status);
-	   tx_thread_sleep(WaitTime);
-   }while((ret != NX_SUCCESS) || (server_status == NX_FALSE));
-   printf("SNTP client receiving updates\r\n");
-   /* We have a valid update.  Get the SNTP Client time. */
-   ret = nx_sntp_client_get_local_time_extended(&SntpClient, &seconds, &fraction, NX_NULL, 0);
-   printf("SNTP Secconds = %lu \r\n", seconds + 19800 );
-   do{
-	   ret = nx_sntp_client_utility_display_date_time(&SntpClient,buffer,64);
-	   tx_thread_sleep(WaitTime);
-
-   }while(ret != NX_SUCCESS);
-
-   printf("\nSNTP update :\n");
-   printf("%s\n\n",buffer);
-
-   /* Set Current time from SNTP TO RTC */
-   rtc_time_update(&SntpClient);
-   /* We can stop the SNTP service if for example we think the SNTP server has stopped sending updates */
-   do{
- 	  ret = nx_sntp_client_stop(&SntpClient);
- 	  tx_thread_sleep(WaitTime);
-   }while(ret != NX_SUCCESS);
-   printf("SNTP client stopped\r\n");
-   /* Display RTC time each second */
-   display_rtc_time(&RtcHandle);
-
-//  /* start the MQTT client thread */
-//  tx_thread_resume(&AppMQTTClientThread);
-
-  /* Toggling LED after a success Time update */
   while(1)
   {
+	  /* 1. Start SNTP and Sync Time */
+	  Sntp_Start_And_Sync( &SntpClient,
+						   sntp_client_info->dns_client_ptr,
+						   wait_for_dns);
 
+	  /* 2. Determine Timezone & Display Time */
+	  Sntp_Auto_Zone_And_Process( &SntpClient,
+								  sntp_client_info->ip_instance,
+								  sntp_client_info->packet_pool,
+								  sntp_client_info->dns_client_ptr);
+
+	  /* 3. Set Current time from SNTP TO RTC */
+	  rtc_time_update(&SntpClient);
+	  /* We can stop the SNTP service if for example we think the SNTP server has stopped sending updates */
+	  do{
+		  ret = nx_sntp_client_stop(&SntpClient);
+		  tx_thread_sleep(wait_for_dns);
+	  }while(ret != NX_SUCCESS);
+	  printf("SNTP client stopped\r\n");
+	  display_rtc_time(&RtcHandle);
 	  /* Delay for 30 minutes */
 	  tx_thread_sleep(RESYNC_INTERVAL);
-
-	  printf("\nRe-syncing time...\n");
-	  do{
-		  ret = nx_dns_host_by_name_get(&DnsClient, (UCHAR *)SNTP_SERVER_NAME_1,
-		                                  &sntp_server_ip.nxd_ip_address.v4, NX_APP_DEFAULT_TIMEOUT);
-		  tx_thread_sleep(WaitTime);
-	  }while(ret != NX_SUCCESS);
-
-	  printf("dns host got\r\n");
-	  /* Use the IPv4 service to set up the Client and set the IPv4 SNTP server. */
-	   do{
-		   ret = nx_sntp_client_initialize_unicast(&SntpClient, sntp_server_ip.nxd_ip_address.v4);
-		   tx_thread_sleep(WaitTime);
-	   }while(ret != NX_SUCCESS);
-	   printf("SNTP client intialized unicast\r\n");
-
-	  /* Run whichever service the client is configured for. */
-	   do{
-		   ret = nx_sntp_client_run_unicast(&SntpClient);
-		   tx_thread_sleep(WaitTime);
-	   }while(ret != NX_SUCCESS);
-	   printf("SNTP client run unicast\r\n");
-
-	   PRINT_CNX_SUCC();
-	//   tx_thread_preemption_change(&AppSNTPThread, old_threshold, &old_threshold );
-	  /* Wait for a server update event. */
-	   do{
-		   tx_event_flags_get(&SntpFlags, SNTP_UPDATE_EVENT, TX_OR_CLEAR, &events, PERIODIC_CHECK_INTERVAL);
-		   if( (  (events & SNTP_UPDATE_EVENT) != SNTP_UPDATE_EVENT  )  ){
-			   /* We can stop the SNTP service if for example we think the SNTP server has stopped sending updates */
-			   do{
-			 	  ret = nx_sntp_client_stop(&SntpClient);
-			 	  tx_thread_sleep(WaitTime);
-			   }while(ret != NX_SUCCESS);
-			   printf("SNTP client stopped\r\n");
-			   do{
-			 	  ret = nx_dns_host_by_name_get(&DnsClient, (UCHAR *)SNTP_SERVER_NAME,
-			 	                                  &sntp_server_ip.nxd_ip_address.v4, NX_APP_DEFAULT_TIMEOUT);
-			 	  tx_thread_sleep(WaitTime);
-			   }while(ret != NX_SUCCESS);
-
-			   nx_sntp_client_set_time_update_notify(&SntpClient, time_update_callback);
-			   ret = nx_sntp_client_initialize_unicast(&SntpClient, sntp_server_ip.nxd_ip_address.v4);
-			   tx_thread_sleep(WaitTime);
-			   ret = nx_sntp_client_run_unicast(&SntpClient);
-			   tx_thread_sleep(WaitTime);
-			   PRINT_CNX_SUCC_1();
-		   }
-	   }while( (  (events & SNTP_UPDATE_EVENT) != SNTP_UPDATE_EVENT  ) );
-
-	   printf("SNTP Event Update\r\n");
-	    /* Check for valid SNTP server status. */
-		  do{
-			  ret = nx_sntp_client_receiving_updates(&SntpClient, &server_status);
-			  tx_thread_sleep(WaitTime);
-		  }while((ret != NX_SUCCESS) || (server_status == NX_FALSE));
-		  printf("SNTP client receiving updates\r\n");
-	    /* We have a valid update.  Get the SNTP Client time. */
-	    ret = nx_sntp_client_get_local_time_extended(&SntpClient, &seconds, &fraction, NX_NULL, 0);
-	    printf("SNTP Secconds = %lu \r\n", seconds + 19800 );
-	    do{
-	        ret = nx_sntp_client_utility_display_date_time(&SntpClient,buffer,64);
-	        tx_thread_sleep(WaitTime);
-
-	    }while(ret != NX_SUCCESS);
-
-	    printf("\nSNTP update :\n");
-	    printf("%s\n\n",buffer);
-
-	    /* Set Current time from SNTP TO RTC */
-	    rtc_time_update(&SntpClient);
-	    /* We can stop the SNTP service if for example we think the SNTP server has stopped sending updates */
-	    do{
-	  	  ret = nx_sntp_client_stop(&SntpClient);
-	  	  tx_thread_sleep(WaitTime);
-	    }while(ret != NX_SUCCESS);
-	    printf("SNTP client stopped\r\n");
-	    /* Display RTC time each second */
-	    display_rtc_time(&RtcHandle);
+	  std::cout << LOG_LOC << "Starting SNTP re-sync.." << std::endl;
   }
 }
 
@@ -319,7 +203,7 @@ static void App_SNTP_Thread_Entry(ULONG info)
   ==============================================================================*/
 struct SntpConfig {
     /* 1. The Fixed Data (The List) */
-    static constexpr std::array<std::string_view, 2> list = {
+    static constexpr std::array<std::string_view, 6> list = {
 		/* Primary: Google (Low latency, Anycast) */
 		"time.google.com",
 
@@ -365,75 +249,411 @@ struct SntpConfig {
 
 /* Create the global instance */
 SntpConfig sntp_servers;
-/* Function: Sntp_Resolve_And_Start
- * Description: Blocking call that loops indefinitely until a DNS IP is found.
+
+/* Function: Sntp_Start_And_Sync
+ * Description: Robustly connects to SNTP.
+ * - Retry Level 1: DNS (3x per server)
+ * - Retry Level 2: SNTP Handshake (3x per server)
+ * - Retry Level 3: Server List (Switch to next server)
  */
-static UINT Sntp_Resolve_And_Start(NX_SNTP_CLIENT *sntp_ptr, NX_DNS *dns_ptr, ULONG wait_option)
+static void Sntp_Start_And_Sync(NX_SNTP_CLIENT *sntp_ptr, NX_DNS *dns_ptr, ULONG wait_option)
 {
-    const int MAX_DNS_RETRIES = 3;
-    const int RETRY_DELAY_TICKS = 100;
+    /* Configuration */
+    const int RETRY_DELAY_TICKS     = 100;  // 1 sec between retries
+    const int SNTP_SYNC_TIMEOUT     = 500;  // 5 sec wait for Time Sync
+    const int MAX_DNS_RETRIES       = 3;
+    const int MAX_PROTOCOL_RETRIES  = 3;    // <--- NEW: Retry SNTP 3 times
 
-    UINT status = NX_DNS_TIMEOUT;
+    UINT status;
     ULONG server_ip = 0;
-    int retry_count = 0;
+    ULONG events = 0;
+    sntp_servers.current_index = 0; // Reset to first server
+    std::cout << LOG_LOC << "--- Starting SNTP Sync Process ---" << std::endl;
 
-    std::cout << LOG_LOC << "Starting SNTP Server Resolution..." << std::endl;
-
-    /* --- 1. DNS Resolution Loop (Do...While) --- */
-    do
+    /* --- LEVEL 3: SERVER LIST LOOP --- */
+    while (true)
     {
-        /* Get current target from your config object */
         std::string_view host = sntp_servers.get_current();
+        std::cout << LOG_LOC << "Targeting Server: " << host << "..." << std::endl;
 
-        std::cout << LOG_LOC << "Resolving: " << host << "..." << std::endl;
+        /* ==================================================================
+         * LEVEL 1: DNS RESOLUTION
+         * ================================================================== */
+        int dns_attempts = 0;
+        bool dns_success = false;
 
-        /* Try DNS */
-        status = nx_dns_host_by_name_get(dns_ptr,
-                                         (UCHAR *)host.data(),
-                                         &server_ip,
-                                         wait_option);
-
-        /* Logic for FAILURE (Continue Looping) */
-        if (status != NX_SUCCESS)
-        {
-            std::cout << LOG_LOC << "DNS Failed (0x" << std::hex << status
-                      << "). Retrying..." << std::dec << std::endl;
-
-            retry_count++;
-            tx_thread_sleep(RETRY_DELAY_TICKS);
-
-            /* Switch Server if Retries Exceeded */
-            if (retry_count >= MAX_DNS_RETRIES)
-            {
-                std::cout << LOG_LOC << "Server " << host
-                          << " unreachable. Switching to backup..." << std::endl;
-
-                sntp_servers.next(); // Move to next server in list
-                retry_count = 0;     // Reset counter
+        do {
+            status = nx_dns_host_by_name_get(dns_ptr, (UCHAR *)host.data(), &server_ip, wait_option);
+            if (status == NX_SUCCESS) {
+                dns_success = true;
+                break;
             }
+            dns_attempts++;
+            std::cout << LOG_LOC << "DNS Attempt " << dns_attempts << " Failed. Retrying..." << std::endl;
+            if (dns_attempts < MAX_DNS_RETRIES) tx_thread_sleep(RETRY_DELAY_TICKS);
+
+        } while (dns_attempts < MAX_DNS_RETRIES);
+
+        if (!dns_success) {
+            std::cout << LOG_LOC << "Server " << host << " DNS Failed. Switching..." << std::endl;
+            sntp_servers.next();
+            tx_thread_sleep(RETRY_DELAY_TICKS);
+            continue; // Restart Outer Loop
+        }
+        else{
+        	std::cout << LOG_LOC << "DNS Success! Resolved " << host
+					  << " to " << format_ip(server_ip) << std::endl;
         }
 
-    } while (status != NX_SUCCESS);
+        /* ==================================================================
+         * LEVEL 2: SNTP PROTOCOL HANDSHAKE (The New Retry Logic)
+         * ================================================================== */
+        int proto_attempts = 0;
+        bool time_synced = false;
 
-    /* --- 2. Success Logic --- */
-    /* Using format_ip() instead of ip_to_str() */
-    std::cout << LOG_LOC << "DNS Success! Resolved to " << format_ip(server_ip) << std::endl;
+        /* Retry Protocol on the SAME IP address before giving up */
+        do {
+            proto_attempts++;
 
-    /* --- 3. Initialize SNTP Unicast --- */
-    status = nx_sntp_client_initialize_unicast(sntp_ptr, server_ip);
+            /* A. Cleanup and Restart to force a new packet */
+            nx_sntp_client_stop(sntp_ptr);
+            nx_sntp_client_initialize_unicast(sntp_ptr, server_ip);
 
-    if (status == NX_SUCCESS)
+            status = nx_sntp_client_run_unicast(sntp_ptr);
+
+            if (status == NX_SUCCESS || status == NX_SNTP_CLIENT_ALREADY_STARTED)
+            {
+                std::cout << LOG_LOC << "SNTP Request Sent (Attempt " << proto_attempts
+                          << "). Waiting for Reply..." << std::endl;
+
+                /* B. Wait for Response */
+                tx_event_flags_set(&SntpFlags, ~SNTP_UPDATE_EVENT, TX_AND);
+
+                status = tx_event_flags_get(&SntpFlags, SNTP_UPDATE_EVENT, TX_OR_CLEAR, &events, SNTP_SYNC_TIMEOUT);
+
+                if (status == TX_SUCCESS) {
+                    time_synced = true;
+                    break; // VICTORY! Break Protocol Loop
+                } else {
+                    std::cout << LOG_LOC << "Time Sync Timeout." << std::endl;
+                }
+            }
+            else {
+                std::cout << LOG_LOC << "SNTP Run Error: 0x" << std::hex << status << std::dec << std::endl;
+            }
+
+            /* Small delay before next protocol attempt */
+            if (proto_attempts < MAX_PROTOCOL_RETRIES) tx_thread_sleep(RETRY_DELAY_TICKS);
+
+        } while (proto_attempts < MAX_PROTOCOL_RETRIES);
+
+
+        /* ==================================================================
+         * FINAL DECISION
+         * ================================================================== */
+        if (time_synced)
+        {
+            std::cout << LOG_LOC << "SUCCESS: Time Synchronized with " << host << "!" << std::endl;
+            ULONG s, f;
+            nx_sntp_client_get_local_time(sntp_ptr, &s, &f, NX_NULL);
+            std::cout << LOG_LOC << "Unix Time: " << s << std::endl;
+            break; // Exit Level 3 (Main Loop) - We are done.
+        }
+        else
+        {
+            std::cout << LOG_LOC << "Server " << host << " Unresponsive (UDP). Switching..." << std::endl;
+            sntp_servers.next(); // Switch Server
+        }
+    }
+}
+
+/* Function: Sntp_Auto_Zone_And_Process
+ * Description:
+ * 1. Attempts to get the current Timezone Offset via IP Geolocation (Internet).
+ * 2. Falls back to a hardcoded default (Pune, India) if Internet fails.
+ * 3. Applies the offset and displays the final local time.
+ */
+void Sntp_Auto_Zone_And_Process(NX_SNTP_CLIENT *sntp_ptr,
+                                NX_IP *ip_ptr,
+                                NX_PACKET_POOL *pool_ptr,
+                                NX_DNS *dns_ptr)
+{
+    /* Configuration: Default to IST (Indian Standard Time) +5:30 */
+    /* 19800 seconds = 5 * 3600 + 30 * 60 */
+    const LONG DEFAULT_OFFSET_IST = 19800;
+
+    LONG final_offset = 0;
+    UINT geo_status;
+
+    std::cout << LOG_LOC << "--- Determining Local Timezone ---" << std::endl;
+
+    /* 1. Attempt Dynamic Lookup */
+    geo_status = Get_Timezone_Offset(ip_ptr, pool_ptr, dns_ptr, &final_offset);
+
+    /* 2. Robust Handling Logic */
+    if (geo_status == NX_SUCCESS)
     {
-        std::cout << LOG_LOC << "SNTP Client Initialized (Unicast) with IP: "
-                  << format_ip(server_ip) << std::endl;
+        /* Case A: Success (Internet worked) */
+        /* Note: final_offset can be 0 (e.g., UK winter), which is valid */
+        std::cout << LOG_LOC << "[Geo] Location Found via IP. Offset: "
+                  << final_offset << " seconds" << std::endl;
     }
     else
     {
-        std::cout << LOG_LOC << "SNTP Init Failed: 0x"
-                  << std::hex << status << std::dec << std::endl;
+        /* Case B: Failure (DNS/Socket Error) - Use Fallback */
+        std::cout << LOG_LOC << "[Geo] Lookup Failed (Error: 0x" << std::hex << geo_status
+                  << "). Using Default Fallback (IST)." << std::dec << std::endl;
+
+        final_offset = DEFAULT_OFFSET_IST;
     }
 
-    return status;
+    /* 3. Apply the decided offset to the SNTP time */
+    Sntp_Process_Time(sntp_ptr, final_offset);
+}
+
+/* Function: Sntp_Process_Time
+ * Description: Verifies update status, retrieves time, applies timezone, and prints.
+ * Parameters:
+ * - sntp_ptr: Pointer to client
+ * - timezone_offset_sec: Seconds to add (e.g., 19800 for India IST +5:30)
+ */
+static void Sntp_Process_Time(NX_SNTP_CLIENT *sntp_ptr, ULONG timezone_offset_sec)
+{
+    UINT ret;
+    UINT server_status = NX_FALSE;
+    ULONG seconds, fraction;
+    CHAR time_buffer[64];
+
+    /* 1. Verify we are actually receiving updates */
+    /* We don't need a loop here; the Event Flag in the previous step guarantees this is ready.
+       But we check once for sanity. */
+    ret = nx_sntp_client_receiving_updates(sntp_ptr, &server_status);
+
+    if ((ret != NX_SUCCESS) || (server_status == NX_FALSE))
+    {
+        std::cout << LOG_LOC << "Error: SNTP Event Triggered, but 'Receiving Updates' is FALSE." << std::endl;
+        return; // specific error handling or return logic could go here
+    }
+
+    std::cout << LOG_LOC << "Status: Valid SNTP Updates Active." << std::endl;
+
+    /* 2. Get the Time (Raw UTC) */
+    ret = nx_sntp_client_get_local_time_extended(sntp_ptr, &seconds, &fraction, NX_NULL, 0);
+
+    if (ret == NX_SUCCESS)
+    {
+        /* 3. Apply Timezone Offset (Manual Calculation) */
+        ULONG local_seconds = seconds + timezone_offset_sec;
+
+        std::cout << LOG_LOC << "UTC Seconds: " << seconds
+                  << " | Local Seconds (+5:30): " << local_seconds << std::endl;
+
+        /* 4. Format and Display */
+        /* Note: This utility uses the raw UTC seconds from the client internal structure usually,
+           so it might print UTC. If you want to print Local Time string, you might need
+           standard C library tools like ctime() on 'local_seconds'.
+
+           However, using the NetX utility as requested: */
+        ret = nx_sntp_client_utility_display_date_time(sntp_ptr, time_buffer, sizeof(time_buffer));
+
+        if (ret == NX_SUCCESS)
+        {
+            std::cout << LOG_LOC << "NetX Formatted Time: " << time_buffer << std::endl;
+        }
+        else
+        {
+            std::cout << LOG_LOC << "Time Format Failed (Buffer too small?)" << std::endl;
+        }
+    }
+    else
+    {
+        std::cout << LOG_LOC << "Failed to retrieve local time extended (0x" << std::hex << ret << ")" << std::dec << std::endl;
+    }
+}
+/*==============================================================================
+  GeoIP Timezone Offset Fetcher
+  ==============================================================================*/
+
+#include "nx_api.h"
+#include <iostream>
+#include <string_view>
+#include <cstdlib> // for std::strtol
+#include <cstring> // for memcpy, strstr
+
+/* --- Configuration Constants --- */
+#define HTTP_WINDOW_SIZE    2048
+#define HTTP_BUFFER_SIZE    2048
+#define IP_API_HOST         "ip-api.com"
+
+/* * Helper: Parse_Offset_Cpp
+ * Uses C++ std::string_view to find the "offset" key safely.
+ * Returns the offset as a LONG.
+ */
+static LONG Parse_Offset_Cpp(std::string_view json)
+{
+    /* 1. Find key "offset" */
+    auto key_pos = json.find("\"offset\"");
+    if (key_pos == std::string_view::npos) return 0;
+
+    /* 2. Find separator ':' */
+    auto val_pos = json.find(':', key_pos);
+    if (val_pos == std::string_view::npos) return 0;
+
+    /* 3. Convert number
+     * json.data() + val_pos + 1 points to the start of the value (e.g., " 19800")
+     * std::strtol automatically skips leading whitespace and handles negative signs.
+     */
+    return std::strtol(json.data() + val_pos + 1, nullptr, 10);
+}
+
+/* * Function: Get_Timezone_Offset_Robust
+ * Description: Connects to ip-api.com to get the current timezone offset (seconds).
+ * Retries on failure and handles packet fragmentation.
+ */
+UINT Get_Timezone_Offset(NX_IP *ip_ptr, NX_PACKET_POOL *pool_ptr, NX_DNS *dns_ptr, LONG *result_offset)
+{
+    UINT status;
+    NX_TCP_SOCKET socket;
+    NXD_ADDRESS server_ip;
+    NX_PACKET *request_packet;
+    NX_PACKET *response_packet;
+
+    UCHAR buffer[HTTP_BUFFER_SIZE];
+    const int MAX_RETRIES = 3;
+    bool success = false;
+
+    *result_offset = 0; // Default to 0
+
+    /* ------------------------------------------------------------------
+     * 1. Resolve DNS
+     * ------------------------------------------------------------------ */
+    std::cout << LOG_LOC << "[Geo] Resolving DNS for: " << IP_API_HOST << "..." << std::endl;
+
+    status = nx_dns_host_by_name_get(dns_ptr, (UCHAR*)IP_API_HOST, &server_ip.nxd_ip_address.v4, 3000);
+    server_ip.nxd_ip_version = NX_IP_VERSION_V4;
+
+    if (status != NX_SUCCESS) {
+        std::cout << LOG_LOC << "[Geo] DNS Failed (0x" << std::hex << status << ")" << std::dec << std::endl;
+        return status;
+    }
+
+    /* ------------------------------------------------------------------
+     * 2. Create Socket
+     * ------------------------------------------------------------------ */
+    status = nx_tcp_socket_create(ip_ptr, &socket, (CHAR*)"GeoSocket",
+                                  NX_IP_NORMAL, NX_FRAGMENT_OKAY, 0x80,
+                                  HTTP_WINDOW_SIZE, NX_NULL, NX_NULL);
+
+    if (status != NX_SUCCESS) return status;
+
+    status = nx_tcp_client_socket_bind(&socket, NX_ANY_PORT, NX_WAIT_FOREVER);
+    if (status != NX_SUCCESS) { nx_tcp_socket_delete(&socket); return status; }
+
+    /* ------------------------------------------------------------------
+     * 3. Connection Retry Loop
+     * ------------------------------------------------------------------ */
+    for (int attempt = 1; attempt <= MAX_RETRIES; attempt++)
+    {
+        std::cout << LOG_LOC << "[Geo] Attempt " << attempt << ": Connecting..." << std::endl;
+
+        /* A. Connect */
+        status = nxd_tcp_client_socket_connect(&socket, &server_ip, 80, 3000);
+
+        if (status != NX_SUCCESS)
+        {
+            std::cout << LOG_LOC << "[Geo] Connect Failed (0x" << std::hex << status << ")" << std::dec << std::endl;
+            nx_tcp_socket_disconnect(&socket, NX_NO_WAIT);
+            tx_thread_sleep(100);
+            continue;
+        }
+
+        /* B. Allocate Packet */
+        status = nx_packet_allocate(pool_ptr, &request_packet, NX_TCP_PACKET, NX_WAIT_FOREVER);
+        if (status != NX_SUCCESS) {
+            nx_tcp_socket_disconnect(&socket, NX_NO_WAIT);
+            break; // Fatal memory error
+        }
+
+        /* C. Prepare HTTP/1.0 Request (No chunking, simpler) */
+        const char *request =
+            "GET /json/?fields=offset HTTP/1.0\r\n"
+            "Host: ip-api.com\r\n"
+            "User-Agent: STM32_Client/1.0\r\n"
+            "Accept: */*\r\n"
+            "Connection: close\r\n"
+            "\r\n";
+
+        nx_packet_data_append(request_packet, (VOID*)request, strlen(request), pool_ptr, NX_WAIT_FOREVER);
+
+        /* D. Send */
+        status = nx_tcp_socket_send(&socket, request_packet, 200);
+        if (status != NX_SUCCESS) {
+            /* NetX usually frees packet on failure, but check your version. */
+            std::cout << LOG_LOC << "[Geo] Send Failed (0x" << std::hex << status << ")" << std::dec << std::endl;
+            nx_tcp_socket_disconnect(&socket, NX_NO_WAIT);
+            tx_thread_sleep(100);
+            continue;
+        }
+
+        /* E. Receive */
+        std::cout << LOG_LOC << "[Geo] Request Sent. Waiting for Reply..." << std::endl;
+        status = nx_tcp_socket_receive(&socket, &response_packet, 5000);
+
+        if (status == NX_SUCCESS)
+        {
+            /* F. Extract Data (Handling Chained Packets) */
+            ULONG total_copied = 0;
+            NX_PACKET *current_packet = response_packet;
+
+            while (current_packet != NX_NULL && total_copied < (HTTP_BUFFER_SIZE - 1))
+            {
+                ULONG bytes = current_packet->nx_packet_length;
+                if ((total_copied + bytes) > (HTTP_BUFFER_SIZE - 1)) {
+                    bytes = (HTTP_BUFFER_SIZE - 1) - total_copied;
+                }
+                memcpy(&buffer[total_copied], current_packet->nx_packet_prepend_ptr, bytes);
+                total_copied += bytes;
+                current_packet = current_packet->nx_packet_next;
+            }
+            buffer[total_copied] = '\0'; // Null Terminate
+            nx_packet_release(response_packet);
+
+            /* G. Parse Body */
+            char *body = strstr((char*)buffer, "\r\n\r\n");
+            if (body)
+            {
+                LONG temp_offset = Parse_Offset_Cpp(body);
+
+                /* Validation: If offset is 0, ensure it was actually "0" in JSON or assume valid GMT */
+                if (temp_offset != 0 || strstr(body, "\"offset\":0") || strstr(body, "\"offset\": 0"))
+                {
+                    *result_offset = temp_offset;
+                    success = true;
+                    std::cout << LOG_LOC << "[Geo] Success! Offset: " << *result_offset << std::endl;
+                }
+                else
+                {
+                     std::cout << LOG_LOC << "[Geo] Parse Warning: Offset 0 or key not found." << std::endl;
+                }
+            }
+
+            /* Clean Disconnect */
+            nx_tcp_socket_disconnect(&socket, 200);
+            break; // Exit Loop
+        }
+        else
+        {
+            std::cout << LOG_LOC << "[Geo] Receive Failed (0x" << std::hex << status << ")" << std::dec << std::endl;
+            nx_tcp_socket_disconnect(&socket, NX_NO_WAIT);
+            tx_thread_sleep(100);
+        }
+    }
+
+    /* 4. Cleanup */
+    nx_tcp_client_socket_unbind(&socket);
+    nx_tcp_socket_delete(&socket);
+
+    return (success ? NX_SUCCESS : NX_NOT_CONNECTED);
 }
 
 /**
@@ -448,14 +668,39 @@ TX_THREAD* get_sntp_client_thread_instance(void){
 	return &AppSNTPThread;
 }
 
-/* 1. Random Number Generator (REQUIRED) */
-/* NetX calls this to get a random seed for timing calculations */
+/* * Function: sntp_random_number_generator
+ * Description:
+ * - Uses STM32 Hardware RNG if 'RNG' or 'HAL_RNG_MODULE_ENABLED' is defined.
+ * - Falls back to standard C rand() if hardware is missing or fails.
+ * - Conforms to NetX Duo callback signature (VOID return, write to pointer).
+ */
 static VOID sntp_random_number_generator(NX_SNTP_CLIENT *client_ptr, ULONG *rand_value)
 {
-    /* Use the STM32 Hardware RNG if available, or a simple C rand() */
-    /* Assuming you have HAL_RNG initialized, or just use standard rand() */
+    /* Avoid compiler warning for unused parameter */
+    NX_PARAMETER_NOT_USED(client_ptr);
+
+/* Check if Hardware RNG is enabled in your project */
+#if defined(RNG) || defined(HAL_RNG_MODULE_ENABLED)
+
+    extern RNG_HandleTypeDef hrng; // Ensure this is accessible (defined in main.c)
+    uint32_t hw_random_val = 0;
+
+    /* Attempt to get Hardware Random Number */
+    if (HAL_RNG_GenerateRandomNumber(&hrng, &hw_random_val) == HAL_OK)
+    {
+        *rand_value = (ULONG)hw_random_val;
+        return; /* Success - exit function */
+    }
+
+    /* If we reach here, Hardware RNG failed. Fall through to software backup. */
+
+#endif
+
+    /* Software Fallback (Weak Randomness) */
+    /* Note: Ideally, seed this with srand(tick_count) somewhere in main() */
     *rand_value = (ULONG)rand();
 }
+
 
 /* 2. Leap Second Handler (Optional) */
 static UINT sntp_leap_second_handler(NX_SNTP_CLIENT *client_ptr, UINT indicator)

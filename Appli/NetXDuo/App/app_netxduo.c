@@ -48,7 +48,7 @@ TX_THREAD AppLinkThread;
 //NXD_MQTT_CLIENT MqttClient;
 
 static NX_DNS   DnsClient;
-TX_EVENT_FLAGS_GROUP     SntpFlags;
+
 ULONG   IpAddress;
 ULONG   NetMask;
 
@@ -256,14 +256,6 @@ UINT MX_NetXDuo_Init(VOID *memory_ptr)
 
   /* USER CODE BEGIN MX_NetXDuo_Init */
 
-  /* Create the event flags. */
-  ret = tx_event_flags_create(&SntpFlags, "SNTP event flags");
-
-  /* Check for errors */
-  if (ret != NX_SUCCESS)
-  {
-    return NX_NOT_ENABLED;
-  }
 
   /* Create a link thread to monitor the network */
   /* Create the Event Flags Group for Link Status */

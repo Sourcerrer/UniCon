@@ -312,8 +312,8 @@ static inline bool publish_time_to_topic(std::string_view topic){
     }while(ret != NX_SUCCESS && retries++ < max_retries);
 
     if(ret == NX_SUCCESS){
-    	std::cout << "Message " << ++message_count << " published: TOPIC = " << topic
-				  << ", MESSAGE = " << message << std::endl;
+//    	std::cout << "Message " << ++message_count << " published: TOPIC = " << topic
+//				  << ", MESSAGE = " << message << std::endl;
 		return true;
 	}
     std::cout << LOG_LOC << "MQTT publish failed after "

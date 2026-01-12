@@ -59,8 +59,6 @@ TX_THREAD* get_mqtt_thread_instance(void);
 }
 #endif
 
-#endif
-
 
 
 #endif /* APP_MQTT_APP_MQTT_H_ */
