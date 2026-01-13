@@ -11,7 +11,7 @@
 #include "nx_api.h"
 #include "nxd_dns.h"
 #include <iostream>
-
+#include "app_netx_conf.h"
 
 /* Printing IP address helper ********************/
 /* 1. Helper Struct (Safe in header)

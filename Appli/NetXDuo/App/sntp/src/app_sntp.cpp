@@ -8,13 +8,15 @@
 
 #include <iostream>
 #include <array>
+#include <vector>
 #include <string_view>
 #include <time.h>
 #include <string>
 #include <cstring>
 #include <cstdio>
 #include <cstdlib> // For atol
-
+#include <cstdlib>
+//#include <cstring>
 #include "nx_api.h"
 #include "app_sntp.h"
 #include "nxd_sntp_client.h"
@@ -32,7 +34,7 @@ struct tm timeInfos;
 RTC_HandleTypeDef RtcHandle;
 /* Set the SNTP network interface to the primary interface. */
 UINT  iface_index =0;
-/* SNTP client */
+/* Private SNTP client function prototypes */
 static UINT kiss_of_death_handler(NX_SNTP_CLIENT *client_ptr, UINT KOD_code);
 static void display_rtc_time(RTC_HandleTypeDef *hrtc);
 static void rtc_time_update(NX_SNTP_CLIENT *client_ptr);
@@ -45,6 +47,7 @@ static VOID time_update_callback(NX_SNTP_TIME_MESSAGE *time_update_ptr, NX_SNTP_
 //static UINT Sntp_Resolve_And_Start(NX_SNTP_CLIENT *sntp_ptr, NX_DNS *dns_ptr, ULONG wait_option);
 static void Sntp_Start_And_Sync(NX_SNTP_CLIENT *sntp_ptr, NX_DNS *dns_ptr, ULONG wait_option);
 static void Sntp_Process_Time(NX_SNTP_CLIENT *sntp_ptr, ULONG timezone_offset_sec);
+/* END private SNTP client function prototypes  */
 UINT Get_Timezone_Offset(NX_IP *ip_ptr, NX_PACKET_POOL *pool_ptr, NX_DNS *dns_ptr, LONG *result_offset);
 void Sntp_Auto_Zone_And_Process(NX_SNTP_CLIENT *sntp_ptr,
                                 NX_IP *ip_ptr,
@@ -258,113 +261,113 @@ SntpConfig sntp_servers;
  */
 static void Sntp_Start_And_Sync(NX_SNTP_CLIENT *sntp_ptr, NX_DNS *dns_ptr, ULONG wait_option)
 {
-    /* Configuration */
-    const int RETRY_DELAY_TICKS     = 100;  // 1 sec between retries
-    const int SNTP_SYNC_TIMEOUT     = 500;  // 5 sec wait for Time Sync
-    const int MAX_DNS_RETRIES       = 3;
-    const int MAX_PROTOCOL_RETRIES  = 3;    // <--- NEW: Retry SNTP 3 times
+	/* Configuration */
+	const int RETRY_DELAY_TICKS     = 100;  // 1 sec between retries
+	const int SNTP_SYNC_TIMEOUT     = 500;  // 5 sec wait for Time Sync
+	const int MAX_DNS_RETRIES       = 3;
+	const int MAX_PROTOCOL_RETRIES  = 3;    // <--- NEW: Retry SNTP 3 times
 
-    UINT status;
-    ULONG server_ip = 0;
-    ULONG events = 0;
-    sntp_servers.current_index = 0; // Reset to first server
-    std::cout << LOG_LOC << "--- Starting SNTP Sync Process ---" << std::endl;
+	UINT status;
+	ULONG server_ip = 0;
+	ULONG events = 0;
+	sntp_servers.current_index = 0; // Reset to first server
+	std::cout << LOG_LOC << "--- Starting SNTP Sync Process ---" << std::endl;
 
-    /* --- LEVEL 3: SERVER LIST LOOP --- */
-    while (true)
-    {
-        std::string_view host = sntp_servers.get_current();
-        std::cout << LOG_LOC << "Targeting Server: " << host << "..." << std::endl;
+	/* --- LEVEL 3: SERVER LIST LOOP --- */
+	while (true)
+	{
+		std::string_view host = sntp_servers.get_current();
+		std::cout << LOG_LOC << "Targeting Server: " << host << "..." << std::endl;
 
-        /* ==================================================================
-         * LEVEL 1: DNS RESOLUTION
-         * ================================================================== */
-        int dns_attempts = 0;
-        bool dns_success = false;
+		/* ==================================================================
+		 * LEVEL 1: DNS RESOLUTION
+		 * ================================================================== */
+		int dns_attempts = 0;
+		bool dns_success = false;
 
-        do {
-            status = nx_dns_host_by_name_get(dns_ptr, (UCHAR *)host.data(), &server_ip, wait_option);
-            if (status == NX_SUCCESS) {
-                dns_success = true;
-                break;
-            }
-            dns_attempts++;
-            std::cout << LOG_LOC << "DNS Attempt " << dns_attempts << " Failed. Retrying..." << std::endl;
-            if (dns_attempts < MAX_DNS_RETRIES) tx_thread_sleep(RETRY_DELAY_TICKS);
+		do {
+			status = nx_dns_host_by_name_get(dns_ptr, (UCHAR *)host.data(), &server_ip, wait_option);
+			if (status == NX_SUCCESS) {
+				dns_success = true;
+				break;
+			}
+			dns_attempts++;
+			std::cout << LOG_LOC << "DNS Attempt " << dns_attempts << " Failed. Retrying..." << std::endl;
+			if (dns_attempts < MAX_DNS_RETRIES) tx_thread_sleep(RETRY_DELAY_TICKS);
 
-        } while (dns_attempts < MAX_DNS_RETRIES);
+		} while (dns_attempts < MAX_DNS_RETRIES);
 
-        if (!dns_success) {
-            std::cout << LOG_LOC << "Server " << host << " DNS Failed. Switching..." << std::endl;
-            sntp_servers.next();
-            tx_thread_sleep(RETRY_DELAY_TICKS);
-            continue; // Restart Outer Loop
-        }
-        else{
-        	std::cout << LOG_LOC << "DNS Success! Resolved " << host
-					  << " to " << format_ip(server_ip) << std::endl;
-        }
+		if (!dns_success) {
+			std::cout << LOG_LOC << "Server " << host << " DNS Failed. Switching..." << std::endl;
+			sntp_servers.next();
+			tx_thread_sleep(RETRY_DELAY_TICKS);
+			continue; // Restart Outer Loop
+		}
+		else{
+			std::cout << LOG_LOC << "DNS Success! Resolved " << host
+					<< " to " << format_ip(server_ip) << std::endl;
+		}
 
-        /* ==================================================================
-         * LEVEL 2: SNTP PROTOCOL HANDSHAKE (The New Retry Logic)
-         * ================================================================== */
-        int proto_attempts = 0;
-        bool time_synced = false;
+		/* ==================================================================
+		 * LEVEL 2: SNTP PROTOCOL HANDSHAKE (The New Retry Logic)
+		 * ================================================================== */
+		int proto_attempts = 0;
+		bool time_synced = false;
 
-        /* Retry Protocol on the SAME IP address before giving up */
-        do {
-            proto_attempts++;
+		/* Retry Protocol on the SAME IP address before giving up */
+		do {
+			proto_attempts++;
 
-            /* A. Cleanup and Restart to force a new packet */
-            nx_sntp_client_stop(sntp_ptr);
-            nx_sntp_client_initialize_unicast(sntp_ptr, server_ip);
+			/* A. Cleanup and Restart to force a new packet */
+			nx_sntp_client_stop(sntp_ptr);
+			nx_sntp_client_initialize_unicast(sntp_ptr, server_ip);
 
-            status = nx_sntp_client_run_unicast(sntp_ptr);
+			status = nx_sntp_client_run_unicast(sntp_ptr);
 
-            if (status == NX_SUCCESS || status == NX_SNTP_CLIENT_ALREADY_STARTED)
-            {
-                std::cout << LOG_LOC << "SNTP Request Sent (Attempt " << proto_attempts
-                          << "). Waiting for Reply..." << std::endl;
+			if (status == NX_SUCCESS || status == NX_SNTP_CLIENT_ALREADY_STARTED)
+			{
+				std::cout << LOG_LOC << "SNTP Request Sent (Attempt " << proto_attempts
+						<< "). Waiting for Reply..." << std::endl;
 
-                /* B. Wait for Response */
-                tx_event_flags_set(&SntpFlags, ~SNTP_UPDATE_EVENT, TX_AND);
+				/* B. Wait for Response */
+				tx_event_flags_set(&SntpFlags, ~SNTP_UPDATE_EVENT, TX_AND);
 
-                status = tx_event_flags_get(&SntpFlags, SNTP_UPDATE_EVENT, TX_OR_CLEAR, &events, SNTP_SYNC_TIMEOUT);
+				status = tx_event_flags_get(&SntpFlags, SNTP_UPDATE_EVENT, TX_OR_CLEAR, &events, SNTP_SYNC_TIMEOUT);
 
-                if (status == TX_SUCCESS) {
-                    time_synced = true;
-                    break; // VICTORY! Break Protocol Loop
-                } else {
-                    std::cout << LOG_LOC << "Time Sync Timeout." << std::endl;
-                }
-            }
-            else {
-                std::cout << LOG_LOC << "SNTP Run Error: 0x" << std::hex << status << std::dec << std::endl;
-            }
+				if (status == TX_SUCCESS) {
+					time_synced = true;
+					break; // VICTORY! Break Protocol Loop
+				} else {
+					std::cout << LOG_LOC << "Time Sync Timeout." << std::endl;
+				}
+			}
+			else {
+				std::cout << LOG_LOC << "SNTP Run Error: 0x" << std::hex << status << std::dec << std::endl;
+			}
 
-            /* Small delay before next protocol attempt */
-            if (proto_attempts < MAX_PROTOCOL_RETRIES) tx_thread_sleep(RETRY_DELAY_TICKS);
+			/* Small delay before next protocol attempt */
+			if (proto_attempts < MAX_PROTOCOL_RETRIES) tx_thread_sleep(RETRY_DELAY_TICKS);
 
-        } while (proto_attempts < MAX_PROTOCOL_RETRIES);
+		} while (proto_attempts < MAX_PROTOCOL_RETRIES);
 
 
-        /* ==================================================================
-         * FINAL DECISION
-         * ================================================================== */
-        if (time_synced)
-        {
-            std::cout << LOG_LOC << "SUCCESS: Time Synchronized with " << host << "!" << std::endl;
-            ULONG s, f;
-            nx_sntp_client_get_local_time(sntp_ptr, &s, &f, NX_NULL);
-            std::cout << LOG_LOC << "Unix Time: " << s << std::endl;
-            break; // Exit Level 3 (Main Loop) - We are done.
-        }
-        else
-        {
-            std::cout << LOG_LOC << "Server " << host << " Unresponsive (UDP). Switching..." << std::endl;
-            sntp_servers.next(); // Switch Server
-        }
-    }
+		/* ==================================================================
+		 * FINAL DECISION
+		 * ================================================================== */
+		if (time_synced)
+		{
+			std::cout << LOG_LOC << "SUCCESS: Time Synchronized with " << host << "!" << std::endl;
+			ULONG s, f;
+			nx_sntp_client_get_local_time(sntp_ptr, &s, &f, NX_NULL);
+			std::cout << LOG_LOC << "Unix Time: " << s << std::endl;
+			break; // Exit Level 3 (Main Loop) - We are done.
+		}
+		else
+		{
+			std::cout << LOG_LOC << "Server " << host << " Unresponsive (UDP). Switching..." << std::endl;
+			sntp_servers.next(); // Switch Server
+		}
+	}
 }
 
 /* Defines for Backup Registers */
@@ -529,17 +532,6 @@ static void Sntp_Process_Time(NX_SNTP_CLIENT *sntp_ptr, ULONG timezone_offset_se
 /*==============================================================================
   GeoIP Timezone Offset Fetcher
   ==============================================================================*/
-#include "nx_api.h"
-#include <iostream>
-#include <string_view>
-#include <vector>
-#include <array>
-#include <cstdlib>
-#include <cstring>
-
-/* --- Configuration --- */
-#define HTTP_WINDOW_SIZE    2048
-#define HTTP_BUFFER_SIZE    2048
 
 /* Structure to define an API Provider */
 struct GeoProvider {
@@ -589,6 +581,11 @@ static LONG Parse_Json_Int(std::string_view json, const char* target_key)
  */
 UINT Get_Timezone_Offset(NX_IP *ip_ptr, NX_PACKET_POOL *pool_ptr, NX_DNS *dns_ptr, LONG *result_offset)
 {
+    /* --- Configuration --- */
+
+    constexpr static const ULONG HTTP_WINDOW_SIZE {2048},
+						  	  	 HTTP_BUFFER_SIZE {2048};
+    /* ----END configuration -------------- */
     UINT status;
     NX_TCP_SOCKET socket;
     NXD_ADDRESS server_ip;
@@ -597,7 +594,6 @@ UINT Get_Timezone_Offset(NX_IP *ip_ptr, NX_PACKET_POOL *pool_ptr, NX_DNS *dns_pt
 
     UCHAR buffer[HTTP_BUFFER_SIZE];
     bool global_success = false;
-
     *result_offset = 0;
 
     std::cout << LOG_LOC << "--- Starting Geolocation Lookup (Multi-API) ---" << std::endl;
@@ -834,7 +830,30 @@ static VOID time_update_callback(NX_SNTP_TIME_MESSAGE *time_update_ptr, NX_SNTP_
 
   tx_event_flags_set(&SntpFlags, SNTP_UPDATE_EVENT, TX_OR);
 }
+
+
+/*==============================================================================
+  RTC Helper Functions
+  ==============================================================================*/
 /* This application updates Time from SNTP to STM32 RTC */
+
+/**
+ * @ref Exported funtion
+ *  */
+void RTC_Format_DateTime(char *buffer, size_t len)
+{
+  RTC_TimeTypeDef RTC_Time = {0};
+  RTC_DateTypeDef RTC_Date = {0};
+
+  HAL_RTC_GetTime(&RtcHandle,&RTC_Time,RTC_FORMAT_BCD);
+  HAL_RTC_GetDate(&RtcHandle,&RTC_Date,RTC_FORMAT_BCD);
+
+  snprintf(buffer, len, "%02x-%02x-20%02x / %02x:%02x:%02x IST",\
+		RTC_Date.Date, RTC_Date.Month, RTC_Date.Year,RTC_Time.Hours,RTC_Time.Minutes,RTC_Time.Seconds);
+}
+/*******************************************************/
+
+
 static void rtc_time_update(NX_SNTP_CLIENT *client_ptr)
 {
   RTC_DateTypeDef sdatestructure ={0};
@@ -899,17 +918,7 @@ static void display_rtc_time(RTC_HandleTypeDef *hrtc)
         RTC_Date.Date, RTC_Date.Month, RTC_Date.Year,RTC_Time.Hours,RTC_Time.Minutes,RTC_Time.Seconds);
 }
 
-static void rtc_time_to_buffer(RTC_HandleTypeDef *hrtc, char *buffer, size_t len)
-{
-  RTC_TimeTypeDef RTC_Time = {0};
-  RTC_DateTypeDef RTC_Date = {0};
 
-  HAL_RTC_GetTime(&RtcHandle,&RTC_Time,RTC_FORMAT_BCD);
-  HAL_RTC_GetDate(&RtcHandle,&RTC_Date,RTC_FORMAT_BCD);
-
-  snprintf(buffer, len, "%02x-%02x-20%02x / %02x:%02x:%02x IST",\
-		RTC_Date.Date, RTC_Date.Month, RTC_Date.Year,RTC_Time.Hours,RTC_Time.Minutes,RTC_Time.Seconds);
-}
 
 static inline uint8_t BCD_To_Decimal(uint8_t bcd) {
     return ((bcd >> 4) * 10) + (bcd & 0x0F);

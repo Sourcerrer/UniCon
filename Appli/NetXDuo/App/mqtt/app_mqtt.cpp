@@ -10,13 +10,27 @@
 #include <sstream>
 #include <string_view>
 #include <cstring>
-
+#include <array>
 /* Appication includes */
 #include "app_mqtt.h"
 #include "app_threadx.h"
 #include "log_util.h"
 #include "netx_util.h"
 #include "nxd_mqtt_client.h"
+
+/* Add this check at the top of app_mqtt.cpp */
+#ifdef USE_SNTP_CLIENT_RTC_UPDATE
+	#if USE_SNTP_CLIENT_RTC_UPDATE == 1
+		#include "app_sntp.h"
+	#endif
+#endif
+
+#if defined(USE_SNTP_CLIENT_RTC_UPDATE) && (USE_SNTP_CLIENT_RTC_UPDATE == 1)
+    #ifndef APP_SNTP_INC_APP_SNTP_H_
+    /* Assuming APP_SNTP_H is the include guard inside app_sntp.h */
+    #error "Error: You enabled SNTP RTC Update, but app_sntp.h is not included!"
+    #endif
+#endif
 
 TX_THREAD AppMQTTClientThread;
 NXD_MQTT_CLIENT MqttClient;
@@ -267,62 +281,110 @@ static const char *Device_Id = "IUC/001"; //example device id
 static bool Power_Status = true; //example power status
 static bool Device_Online_when_DataCaptured = true; //example device online status
 static uint32_t Input_Status = 0x5A5A; //example input status
-static inline bool publish_time_to_topic(std::string_view topic){
-    /* Publish a message with QoS Level 1. */
-	UINT ret;
-	static UINT message_count = 0;
-    ULONG retries = 0;
-    static const ULONG max_retries = 5;
-	const static ULONG wait_time = 150 * NX_IP_PERIODIC_RATE; // 5 seconds
-	/* 2. Use NX_FALSE for Retain unless this is a Status Message */
-	static UINT retain_flag = NX_TRUE;
-    extern RTC_HandleTypeDef RtcHandle;
-//    const static ULONG WaitTime = 100;
 
-    /* TODO Get the buffer from User byte pool */
-//    CHAR message[100];
-//    char time_string[32];
-    std::string time_string{"23rd Oct 2025 14:30:00"}; //placeholder for time string
-//    rtc_time_to_buffer(&RtcHandle, time_string, sizeof(time_string));
-    /* Toggle power status for demonstration */
-    Power_Status ^=1;
-    /* Toggle device online status for demonstration */
-    Device_Online_when_DataCaptured ^=1;
 
+// Define a consistent log macro if not already defined
+#ifndef LOG_ERROR
+#define LOG_ERROR(msg) std::cerr << LOG_LOC << "[ERROR] " << (msg) << std::endl
+#endif
+#ifndef LOG_INFO
+#define LOG_INFO(msg)  std::cout << LOG_LOC << "[INFO] " << (msg) << std::endl
+#endif
+
+static inline bool publish_time_to_topic(std::string_view topic) {
+    /* 0. Safety Checks */
+    if (topic.length() >= NXD_MQTT_MAX_TOPIC_NAME_LENGTH) {
+        LOG_ERROR("Topic length exceeds NXD limit.");
+        return false;
+    }
+
+    /* 1. Modern Stack Allocation (std::array)
+     * - Zero-initialized automatically with {}
+     * - Stays on the stack (fast, no fragmentation)
+     * - Knows its own size via .size()
+     */
+    std::array<char, 256> payload_buffer{};
+    std::array<char, 64> time_buffer{};
+
+    /* 2. Format Time */
+#ifdef USE_SNTP_CLIENT_RTC_UPDATE
+    // .data() gives us the raw pointer needed by C APIs
+    RTC_Format_DateTime(time_buffer.data(), time_buffer.size() - 1);
+#else
+    // Use snprintf instead of strncpy for safety and guaranteed null-termination
+    std::snprintf(time_buffer.data(), time_buffer.size(), "Time Not Set");
+#endif
+
+    /* 3. Prepare Logic/Data */
+    Power_Status ^= 1;
+    Device_Online_when_DataCaptured ^= 1;
     Input_Status ^= 0xFFFF;
-    /* Prepare the string */
-    std::stringstream ss;
-    ss << "Time: " << time_string
-	   << ", Device ID: " << Device_Id
-	   << ", Power Status: " << (Power_Status ? "ON" : "OFF")
-	   << ", Device Online when Data Captured: " << (Device_Online_when_DataCaptured ? "YES" : "NO")
-	   << ", Input Status: 0x" << std::hex << Input_Status;
-    std::string message = ss.str();
-    /* TODO Add sensor data to the message */
-	/* Publish the message to the broker */
-    do{
-    	ret = nxd_mqtt_client_publish(&MqttClient, const_cast<CHAR *>( topic.data() ), topic.length(),
-    	                                  static_cast<CHAR *>( message.data() ), message.length(),
-										  retain_flag, QOS1, wait_time);
-    	if (ret != NX_SUCCESS)
-    	{
-    		std::cerr << "MQTT publish failed, 0x" << std::hex << ret << std::dec << std::endl;
-    		tx_thread_sleep(100);
-    	}
-    }while(ret != NX_SUCCESS && retries++ < max_retries);
 
-    if(ret == NX_SUCCESS){
-//    	std::cout << "Message " << ++message_count << " published: TOPIC = " << topic
-//				  << ", MESSAGE = " << message << std::endl;
-		return true;
-	}
-    std::cout << LOG_LOC << "MQTT publish failed after "
-			  << retries << " retries." << std::endl;
-//    printf("MQTT publish failed after %ld retries,\r\n", retries);
+    /* 4. Format the Payload
+     * Using .data() and .size() prevents size mismatch errors common with sizeof()
+     */
+    int payload_len = std::snprintf(payload_buffer.data(), payload_buffer.size(),
+        "Time: %s, Device ID: %s, Power Status: %s, Device Online: %s, Input Status: 0x%X",
+        time_buffer.data(),
+        Device_Id,
+        (Power_Status ? "ON" : "OFF"),
+        (Device_Online_when_DataCaptured ? "YES" : "NO"),
+        static_cast<unsigned int>(Input_Status));
+
+    /* Check for formatting errors */
+    if (payload_len < 0 || payload_len >= static_cast<int>(payload_buffer.size())) {
+        LOG_ERROR("Payload truncation or formatting error.");
+        return false;
+    }
+
+    /* 5. Publish with Retries */
+    UINT ret = NX_IP_INTERNAL_ERROR;
+    ULONG retries = 0;
+    const ULONG max_retries = 5;
+    const ULONG wait_time = 150 * NX_IP_PERIODIC_RATE;
+    do {
+        /* Modern Casting:
+         * reinterpret_cast is safer than (CHAR*) because it forces you to acknowledge
+         * that you are re-interpreting bits.
+         */
+        ret = nxd_mqtt_client_publish(&MqttClient,
+                                      reinterpret_cast<CHAR*>(const_cast<char*>(topic.data())),
+                                      static_cast<UINT>(topic.length()),
+                                      reinterpret_cast<CHAR*>(payload_buffer.data()),
+                                      static_cast<UINT>(payload_len),
+                                      NX_FALSE,
+                                      QOS1,
+                                      wait_time);
+
+        if (ret != NX_SUCCESS) {
+            tx_thread_sleep(100);
+            retries++;
+        }
+
+    } while (ret != NX_SUCCESS && retries < max_retries);
+
+    /* 6. Final Logging */
+    if (ret == NX_SUCCESS) {
+#if ENABLE_MQTT_PUBLISH_LOGS == 1
+        // std::string_view avoids copying the buffer for printing
+        std::cout << LOG_LOC << "Message " << ++message_count
+                  << " published. Topic: " << topic
+                  << " | Payload: " << std::string_view(payload_buffer.data(), payload_len)
+                  << std::endl;
+#endif
+        return true;
+    }
+
+    LOG_ERROR("MQTT publish failed. Error: 0x" + std::to_string(ret));
     return false;
-
 }
 
+
+/**
+ *  @brief Publish an empty message to a topic to clear retained messages
+ * @param topic The topic to publish the empty message to
+ * @return true if successful, false otherwise
+ */
 static bool mqtt_client_publish_empty_message(std::string_view topic){
 	/* Publish messages infinitely if NB_MESSAGE is 0 */
 	UINT ret;

@@ -12,6 +12,10 @@
 #include "app_netxduo.h"
 
 
+/* MQTT Client USER configuration */
+#define ENBALE_MQTT_PUBLISH_LOGS	0  /* Set to 1 to enable MQTT publish logs, 0 to disable */
+
+
 /* MQTT Client configuration */
 #define MQTT_CLIENT_STACK_SIZE      1024 * 10
 #define MQTT_PRIORITY               10
@@ -33,6 +37,7 @@
 #define QOS1                        1
 #define DEMO_MESSAGE_EVENT          1
 #define DEMO_ALL_EVENTS             3
+
 
 typedef enum {
 	emqtt_connected 			= ( (ULONG)(1UL << 0UL) ),

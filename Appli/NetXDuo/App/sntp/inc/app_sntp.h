@@ -14,9 +14,6 @@
 #define SNTP_PRIORITY               14
 /* SNTP Client configuration */
 #define SNTP_CLIENT_THREAD_MEMORY    6 * 1024
-//#define SNTP_SERVER_NAME             "time1.google.com"
-//#define SNTP_SERVER_NAME_1			 "0.in.pool.ntp.org"
-
 #define SNTP_UPDATE_EVENT           (uint32_t)( 1UL << 0UL )
 #define SNTP_RTC_UPDATE_EVENT		(uint32_t)( 1UL << 1UL )
 #define SNTP_NETWORK_CABLE_CONNECTED_EVENT		(uint32_t)( 1UL << 2UL )
@@ -49,6 +46,15 @@ UINT app_sntp_init( void *byte_pool, NX_PACKET_POOL *packet_pool,
  */
 TX_THREAD* get_sntp_client_thread_instance(void);
 
+/**
+ * * @ref Exported funtion
+ * @brief  Format the RTC date and time into a string.
+ * @param  buffer Pointer to the character buffer to store the formatted date and time.
+ * @param  len Length of the buffer.
+ * @return None.
+ * @note This function retrieves the current date and time from the RTC. Callable from C and C++.
+ */
+void RTC_Format_DateTime(char *buffer, size_t len);
 #ifdef __cplusplus
 }
 #endif
